@@ -63,3 +63,73 @@ unaffected by a docs-only change) and `pnpm check:evidence`. That check
 still fails on the missing `reflections/crit-7.md` — expected, since that
 file is written at the phase-6 cutoff, not now — and otherwise passes now
 that this file's template comment is gone and cites a real commit.
+
+### Phase 2 — database, migration, demo data, and backend interfaces
+
+I approved moving into phase 2 and gave the agent detailed requirements
+against `PLAN.md`'s design: how lectures/tutorials relate to a course, how
+candidate/preview/confirmed state must stay separate, what must persist,
+what the demo data has to cover, and that all writes must be
+server-validated with nothing trusted from the client about which session
+belongs to which course.
+
+The agent turned `PLAN.md`'s data design into `src/lib/schema.ts`
+(`courses`, `sessions`, `candidate_courses`, `plan_preferences`,
+`confirmed_enrollments`) and generated the migration with `pnpm db:generate`.
+While building it, the agent read Astro's origin-check middleware source
+directly to confirm which request shapes the spec tests actually need an
+`origin` header for (JSON bodies are exempt; bodyless `DELETE` needs one),
+rather than guessing, and read the existing `spec/global-setup.ts` to confirm
+the whole test run shares one running server and one SQLite database, which
+is why the new spec files are scoped one table/feature per file.
+
+The demo dataset (`src/lib/seed.ts`) is seven fictional courses, each titled
+"(demo)", picked to hit every scenario I asked for: an unavoidable lecture
+clash (COMP1010/COMP2100), an avoidable tutorial clash (COMP1010/COMP3120,
+where a different tutorial pairing works), an adjacent-not-conflicting pair
+(COMP4444/ENGN2222), and a spread across five different days so blackout
+days and day preferences actually matter. `spec/demo-data.test.ts` brute-
+forces every tutorial combination against the live `/api/courses` response
+to check all of that mechanically, rather than trusting the hand-written
+comment in `seed.ts` that describes it. Seeding upserts by natural key
+(course `code`; session `(courseId, label)`) and never touches
+`candidate_courses`, `plan_preferences` or `confirmed_enrollments`, so
+rerunning it can't duplicate rows or erase anything I've saved.
+
+`confirmEnrollment` in `src/lib/db.ts` replaces the whole confirmed plan
+inside one `db.transaction()`. The delete happens first and validation is
+interleaved afterward — checking each submitted course and tutorial actually
+exist and belong together, and that the chosen sessions don't clash — so
+that a genuine mid-transaction failure rolls back the delete and any inserts
+already applied, and the previous confirmed plan survives untouched. That's
+exercised directly in `spec/enrollment.test.ts` (submit an unavoidable clash,
+then check the prior plan is still there afterward) rather than only argued
+for in a comment.
+
+`spec/schema-constraints.test.ts` runs against its own throwaway SQLite file
+(built from the real migration, not a hand-copied schema) to exercise the
+CHECK/UNIQUE/FOREIGN KEY constraints directly — kind and day-of-week checks,
+start-before-end, duplicate candidate/enrolment rejection, cascade delete on
+a course, and restrict-delete on a session a confirmed enrolment still
+points at.
+
+Verification the agent ran before each of the three commits below: `pnpm
+typecheck` (0 errors) and `pnpm test` (`astro build` + the full vitest run —
+10 spec files, 74 tests, all passing). `pnpm check:evidence` was also run
+and still fails, as expected: it only fails on the missing
+`reflections/crit-7.md`, which is phase-6 work I have deliberately not
+started yet. I have not asked the agent to claim that check passes, and it
+hasn't.
+
+Commits for this phase, in the independent completion points I asked for:
+- [`69b0880`](https://github.com/comp4020-agentic-coding-studio/comp4020-crit7-shuyangyuzu-cmd/commit/69b0880) — data model and migration
+- [`bbdee95`](https://github.com/comp4020-agentic-coding-studio/comp4020-crit7-shuyangyuzu-cmd/commit/bbdee95) — demo data seed
+- [`f31d7f3`](https://github.com/comp4020-agentic-coding-studio/comp4020-crit7-shuyangyuzu-cmd/commit/f31d7f3) — backend interfaces, seeding wiring, and tests
+
+Open questions I still need to decide before phase 3: how much of the
+preview/generated-plan UI should show at once when the result list is
+capped (PLAN.md already requires disclosing a cap, but not the cap number
+itself); and whether soft-preference ranking should be a simple weighted
+sort or something I want to reason through more before the agent builds it.
+Nothing in this phase was pushed to `origin`, deployed, or started on phase
+3, per my instruction.
