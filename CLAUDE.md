@@ -51,3 +51,54 @@ an unrelated ANU system, not that one.
   that matches by process name rather than by the one PID you recorded. If
   you can't confirm which PID is yours, ask rather than guessing with a
   broader command.
+
+## This project: ANU course selection & timetable planner
+
+Scope, acceptance criteria and data design live in `PLAN.md`, not here. These
+are the constraints on how the agent builds it, decided when the topic was
+agreed.
+
+- Everything is demo data for one semester and one demo student: courses,
+  session times, and enrolments must be clearly presented as a prototype, and
+  nothing in the app may claim to be ANUHub, Programs and Courses, or any
+  other real ANU service.
+- Enrolling or withdrawing only ever writes to this app's own SQLite
+  database. Never add a call to any external ANU system — there's nothing to
+  integrate with, and the whole point is that this app doesn't touch ANUHub.
+- No login, no multi-semester planning, no real seat-competition modelling,
+  no degree/program requirement checking. If a feature would need one of
+  these to make sense, it's out of scope, not a shortcut to build around.
+- "Required" always means *I've locked this course for this planning
+  session*. Never word UI text, copy, or test assertions as if it verifies a
+  degree requirement — say "locked" or "required for this plan," not
+  "required for your degree."
+- The candidate list has no enrolment cap; the enrolment *target* (the number
+  of courses the generator tries to fill) is a choice of 3 or 4, set by me,
+  not hardcoded to one value.
+- Hard constraints (a day I can't attend) must always be satisfied — a plan
+  that violates one is never offered. Soft preferences only change the order
+  candidate plans are shown in; they must never eliminate an otherwise-valid
+  plan.
+- Two sessions that are exactly back-to-back (one ends when the next starts)
+  are not a conflict. Travel time between buildings is not modelled.
+- When required courses, blackout days, or thin candidates leave no feasible
+  plan, say so with a specific, accurate reason grounded in what actually
+  conflicts — never fabricate or generalise a reason. A single clashing
+  tutorial is reported as a tutorial-level conflict on that course, never as
+  "this course can't be taken" when another tutorial would work.
+- If the list of generated plans shown is capped for display, the UI must say
+  so explicitly. A capped list must never be presented the same way as "no
+  other plans exist."
+- Candidate courses, a previewed/generated plan, and the confirmed enrolment
+  are three distinct states, in the data model and in the UI. Don't let a
+  generated preview silently become "confirmed," and don't let removing a
+  candidate silently touch a confirmed enrolment.
+- Replacing the confirmed enrolment is one transaction: if it fails partway,
+  the previous confirmed plan must remain exactly as it was, not partially
+  overwritten.
+- Git discipline for this build: at least one commit per phase in `PLAN.md`'s
+  implementation order, with an independent commit for any separately
+  significant feature or fix within a phase. Run verification proportionate
+  to the change before each commit rather than saving it all for one commit
+  at the end. Don't push to `origin` or change repo visibility except when I
+  explicitly ask for it in that turn.
