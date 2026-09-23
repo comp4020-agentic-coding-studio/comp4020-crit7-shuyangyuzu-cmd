@@ -133,3 +133,88 @@ itself); and whether soft-preference ranking should be a simple weighted
 sort or something I want to reason through more before the agent builds it.
 Nothing in this phase was pushed to `origin`, deployed, or started on phase
 3, per my instruction.
+
+### Phase 3 — candidate courses, manual timetable, and early conflict hints
+
+Before building anything, I had the agent re-check the phase 2 backend
+against what phase 3 would need: a read endpoint for confirmed
+enrolment (already there), full time-range validation on a session, not
+just start-before-end (already a `CHECK` constraint in the schema), and
+that both a course's lecture and its chosen tutorial participate in
+conflict detection (already how `confirmEnrollment` builds its slot
+list). All three held without any backend change, and `git log`
+confirmed the repo was still exactly 5 commits ahead of `origin/main`
+and 0 behind, with nothing to reconcile.
+
+I settled the plan-generation rules phase 4 will need — full brute-force
+search at this dataset's 7-course scale so the reported feasible-plan
+count is always exact, top-50/10-per-page display, and a fixed soft-
+preference tie-break order — as a documentation-only decision in
+`PLAN.md`, without building any of the generator itself this phase.
+
+For the actual phase 3 build, I asked for a candidate-courses browser and
+a manual (not auto-populated) preview timetable on a new `/planner/`
+page. Candidate, preview, and confirmed had to stay three visibly
+separate states — nothing here was allowed to blur into "confirmed," and
+removing a candidate had to clear it from the preview without ever
+touching confirmed enrolment. I also asked for early conflict hints
+against the current preview, worded so they never imply a course is
+globally infeasible, and for the page to read honestly as a prototype:
+a disclaimer that it isn't a real ANU service and that the course data
+and the single demo student account are both fictional.
+
+While building the interactive script, the agent found that an Astro
+`<script>` tag using `define:vars` can't also use an ES `import` — it
+split the page into a raw JSON data island (deliberately left
+`is:inline`, holding the server-computed course/candidate data) and a
+separate plain `<script>` that imports `sessionsOverlap`/`findConflict`
+from `src/lib/scheduling.ts`, so the client-side conflict hints run the
+exact same logic as the server's own conflict checks rather than a
+re-implementation of it. `pnpm exec astro check` and `pnpm exec astro
+build` both had to pass before this was considered done.
+
+Adding the planner page's tests surfaced a real bug in the tests
+themselves, not the app: because all spec files share one running server
+and one SQLite database, and Vitest runs spec files concurrently by
+default, a naive "confirmed enrolment is unchanged" check that snapshots
+`/api/enrollment` before and after an unrelated candidate operation can
+race `spec/enrollment.test.ts`'s own legitimate writes to that same
+endpoint — which is the only file in the suite that ever calls
+`POST`/`DELETE /api/enrollment`. The agent caught this itself from a
+failing (not flaky-looking, straightforwardly failing) test run, moved
+that specific check into `spec/enrollment.test.ts` where it can compare
+before/after without racing anyone else, and reran the full suite three
+times in a row to confirm the fix actually removed the race rather than
+just narrowing its window.
+
+Verification the agent ran before these commits: `pnpm exec astro check`
+(0 errors, 0 warnings, 1 expected hint on the intentionally-raw JSON
+script), `pnpm exec astro build`, and `pnpm exec vitest run` — 96/96
+tests passing, rerun three times to check for flakiness. `pnpm
+check:evidence` was also run and still fails only on the missing
+`reflections/crit-7.md`, exactly as expected at this phase; I have not
+asked the agent to claim that check passes.
+
+What I have not had the agent verify directly: there's no browser-
+automation tool available in this environment, so the 1920×1080 and
+390×844 viewport checks this repo's `CLAUDE.md` requires were not done
+by actually looking at rendered pixels. What stands in for that instead:
+the CSS is structured as a 7-column weekly grid above a 640px breakpoint
+and a single stacked column with wrapping text below it (so nothing
+should truncate on a narrow screen), and `spec/invariants.test.ts` now
+runs its full accessibility/structural check (200 response, `lang`,
+title, viewport meta, a `nav` landmark, exactly one `h1`, `alt` text,
+zero axe-core violations) against `/planner/` for the first time and
+passes. I still need to actually open `pnpm run dev` (or `pnpm build &&
+pnpm preview`) and look at `/planner/` myself at both sizes before I'd
+call this phase's UI genuinely checked, not just type-checked and
+lint-clean.
+
+Commits for this phase:
+- [`40e8e3e`](https://github.com/comp4020-agentic-coding-studio/comp4020-crit7-shuyangyuzu-cmd/commit/40e8e3e) — plan-generation ranking rules for phase 4 (planning only)
+- [`ff1d7ad`](https://github.com/comp4020-agentic-coding-studio/comp4020-crit7-shuyangyuzu-cmd/commit/ff1d7ad) — candidate-courses browser, manual preview timetable, and conflict hints
+- [`ca8164c`](https://github.com/comp4020-agentic-coding-studio/comp4020-crit7-shuyangyuzu-cmd/commit/ca8164c) — tests for state separation, persistence, and the conflict primitive
+
+Deliberately out of scope this phase, per my instruction: the
+auto-generate-plan UI and the final-confirm-enrolment UI (both phase 4),
+and pushing to `origin` or deploying anything.
