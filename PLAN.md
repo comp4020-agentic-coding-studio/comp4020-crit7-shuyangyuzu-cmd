@@ -161,11 +161,42 @@ Planned API surface (interfaces, not implementations):
    verify the live core flow and persistence; finish `PROCESS.md` and
    `reflections/crit-7.md`; check off the spec.
 
+## Plan generation & ranking (decided in phase 3, implemented in phase 4)
+
+Settled while working on phase 3 (candidates & manual timetable), against the
+real 7-course demo dataset — not implemented yet; this is the contract phase
+4's generator has to satisfy.
+
+- The generator runs a **full search** over the current demo-data scale (7
+  courses, at most 3 tutorials each): enumerate every combination of
+  candidates at the target course count, and every tutorial choice within
+  each, and keep every combination with no conflict (lecture-vs-lecture,
+  lecture-vs-tutorial, or tutorial-vs-tutorial). This is exhaustive, not a
+  sampled or early-exiting search, so the *count* of feasible plans reported
+  is always the true count at this data scale.
+- Feasible plans are then sorted by the ranking rule below and **truncated to
+  the top 50**; the UI paginates that top 50 at **10 per page**. The response
+  and the UI both state the true total number of feasible plans found and
+  that the list is capped at 50 — a capped list is never presented as "no
+  other plans exist" (carries forward the rule already in this file).
+- **Ranking** applies only the soft preferences I've actually turned on —
+  an unchecked preference contributes nothing to ordering, it doesn't rank as
+  "worst." Applied in this fixed order, each a tie-break on the previous:
+  1. If "avoid these days" is set: total minutes scheduled on those days
+     (lower is better) — a plan with less time on an avoided day ranks
+     first, even if it can't avoid the day entirely (blackout days are the
+     hard constraint that rules a day out completely; "avoid" is soft).
+  2. If "minimise days on campus" is set: number of distinct days with any
+     session at all (lower is better).
+  3. Anything still tied keeps a **stable sort** (original enumeration
+     order), so re-running generation against the same inputs always
+     produces the same order — no arbitrary reshuffling of equally-good
+     plans between runs.
+
 ## Open questions / risks
 
 - With 6–8 courses and a handful of tutorials each, brute-force enumeration
   of tutorial combinations per candidate subset is small enough that no
-  search library is needed — worth confirming once real demo data exists.
-- Exactly how many plans to show, and how ranking among soft preferences
-  should break ties, isn't decided yet; phase 3 is where that gets settled
-  against real fixture data instead of guessed in the abstract.
+  search library is needed — confirmed against the real 7-course demo data in
+  phase 3 (`spec/demo-data.test.ts` already brute-forces feasibility the same
+  way).
