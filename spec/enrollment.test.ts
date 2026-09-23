@@ -134,4 +134,23 @@ describe("enrollment", () => {
     const after = await getEnrollment();
     expect(after.map((row) => row.course.code)).toEqual(["ENGN2222"]);
   });
+
+  // Verified here, not in spec/candidates.test.ts or spec/planner.test.ts:
+  // this file is the sole caller of POST/DELETE /api/enrollment in the whole
+  // suite, so only here can a before/after snapshot of it be compared for
+  // exact equality without racing another file's legitimate writes to it
+  // (fileParallelism runs spec files concurrently against one shared server).
+  // COMP1010 is used here only for its candidate_courses row, never as a
+  // candidate by any other file, so this doesn't race their candidate rows.
+  it("adding, requiring and removing a candidate leaves confirmed enrolment untouched", async () => {
+    const before = await getEnrollment();
+
+    expect((await json("/api/candidates", "POST", { courseId: courses.COMP1010.id })).status).toBe(201);
+    expect((await json("/api/candidates", "PATCH", { courseId: courses.COMP1010.id, required: true })).status).toBe(
+      200,
+    );
+    expect((await del(`/api/candidates?courseId=${courses.COMP1010.id}`)).status).toBe(204);
+
+    expect(await getEnrollment()).toEqual(before);
+  });
 });

@@ -87,3 +87,9 @@ describe("candidates", () => {
     expect(res.status).toBe(404);
   });
 });
+
+// The "never touches confirmed enrolment" property is verified in
+// spec/enrollment.test.ts instead of here: that file is the suite's sole
+// caller of POST/DELETE /api/enrollment, so it's the only place a
+// before/after snapshot of it can be compared without racing another spec
+// file's legitimate writes to the same shared resource.
