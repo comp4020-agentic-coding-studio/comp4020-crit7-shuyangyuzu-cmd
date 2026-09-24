@@ -218,3 +218,114 @@ Commits for this phase:
 Deliberately out of scope this phase, per my instruction: the
 auto-generate-plan UI and the final-confirm-enrolment UI (both phase 4),
 and pushing to `origin` or deploying anything.
+
+### Phase 3 revision — the lecture rule, session locations, and a two-page split
+
+Using the planner page I'd just had built surfaced a real problem with the
+conflict rule I'd originally specified: I'd written it as "any overlap is a
+conflict," but a lecture is recorded, so a lecture overlapping anything —
+even another lecture — shouldn't block a plan the way two clashing
+tutorials should. I corrected the rule myself (only a tutorial overlapping
+another tutorial actually blocks; a lecture overlap is at most a mild,
+non-blocking note; only tutorials count toward blackout days, "avoid this
+day," or "days on campus") and had the agent carry that correction through
+`scheduling.ts` (a `classifyOverlap`/`isBlockingOverlap` primitive shared by
+server validation and, from this point on, every client-side hint),
+`schema.ts` (`sessions.kind` typed at compile time, not just DB-checked),
+the demo data, and the specs that exercised the old rule. I also asked for
+the still-open contracts the next two rounds would need written down in
+`PLAN.md`/`CLAUDE.md` rather than left implicit: the phase-4 auto-schedule
+rules, and how a same-timeslot, multiple-room tutorial should behave.
+
+That second contract — same course, same day/start/end, more than one room
+— became its own small round: a `sessions.location` column (additive
+migration, existing rows unaffected) and `groupTutorialTimeOptions` in
+`scheduling.ts`, which collapses sessions sharing a day/start/end into one
+selectable time option and marks it "pending" only when more than one
+section shares that time. I asked for this specifically so the UI could
+never silently default to the first room in that situation — it has to
+show the time as scheduled and the room as a separate, explicit choice.
+STAT1008 in the demo data now carries exactly that case (one tutorial time,
+two rooms), checked end-to-end in `spec/demo-data.test.ts` and at the unit
+level in `spec/scheduling.test.ts`.
+
+With both of those contracts settled, I asked for the actual phase-3 UI
+promised in the original round: a page split, and manual scheduling as the
+complete, only path this phase (no auto-generation yet). Course search/
+filtering and candidate management moved to a new `/courses/` page;
+`/planner/` was rebuilt around a compact left-hand schedule list next to a
+large weekly grid that updates the moment anything changes — the layout
+MyTimetable itself uses, not a multi-step wizard. I was explicit that this
+is a page split, not a scope change: candidate, preview, and confirmed
+still have to be three separate states, and moving candidate management off
+`/planner/` couldn't be allowed to make the client-only preview harder to
+keep separate from the persisted candidate list.
+
+That separation raised a real question I had to settle before the agent
+built anything: the preview only ever lived in memory on the old combined
+page, so it reset itself for free every time the page reloaded. Once
+adding a candidate and scheduling it live on two different pages, a
+preview that reset itself on every navigation would be unusable — but I
+also didn't want it to quietly become a second, competing source of truth
+next to the server's candidate list. I decided it should survive a
+navigation between just these two pages, nowhere else, and never be
+allowed to disagree with the server about what's actually a candidate. The
+agent implemented that as a `sessionStorage`-backed map (course → chosen
+time/room, or "nothing chosen") that `/planner/` reconciles against the
+freshly-loaded candidate list and course data on every load: a course
+removed on `/courses/` since the preview was last saved drops out
+entirely, and a room choice that no longer matches any current time option
+falls back to "time chosen, room still pending" rather than pointing at
+data that doesn't exist anymore. `/courses/` itself never reads or writes
+this preview at all — it only manages the persisted candidate list, so
+there's nothing for it to keep in sync.
+
+While rebuilding `/planner/`, the agent also found and fixed a real bug
+left over from the single-page version: its lecture-overlap notice used
+the same red, blocking style as an actual tutorial clash, which
+contradicts the lecture rule I'd corrected above. The rewrite runs every
+overlap through `classifyOverlap` — in the per-course time-option notes,
+the top-of-page conflict summary, and the weekly grid block styling alike
+— so a tutorial clash reads as red and blocking and a lecture overlap
+reads as a distinct, mild, blue, explicitly non-blocking note, consistently
+in all three places rather than reimplemented separately in each.
+
+Partway through this round, the agent caught and fixed its own mistake
+before anything was committed: a `Write` call meant to create a new test
+file for `/courses/` had reused the filename `spec/courses.test.ts`,
+silently overwriting the phase-2 file that already existed under that name
+for the read-only `GET /api/courses` backend tests. It found this itself
+from `git status` showing the file as modified rather than newly-added
+before staging anything, restored the original content from `HEAD`, and
+moved its new page-level tests to `spec/courses-page.test.ts` instead —
+so both sets of tests exist side by side now, and nothing was lost.
+
+Verification the agent ran before this round's commits: `pnpm typecheck`
+(0 errors, 0 warnings, the same 2 pre-existing `is:inline` hints on the
+raw JSON data-island scripts as before) and `pnpm test` (`astro build`
+plus the full vitest run — 13 spec files, 123 tests, all passing,
+including the phase-2 `/api/courses` tests once restored). `pnpm
+check:evidence` still fails only on the missing `reflections/crit-7.md`,
+exactly as expected this far from the phase-6 cutoff.
+
+What I still have not had verified directly: there is still no
+browser-automation tool available in this environment, so I have not had
+the agent confirm the 1920×1080 and 390×844 layouts by looking at rendered
+pixels — that limitation from the previous phase-3 section hasn't gone
+away. The new `.planner-layout`/`.planner-right` and `.course-filters`
+rules follow the same pattern as before (a side-by-side layout above the
+existing 640px breakpoint, a single stacked column with wrapping text
+below it), and `spec/invariants.test.ts` now also runs its structural/
+accessibility check against `/courses/` for the first time, on top of the
+existing `/planner/` check. I still need to open the app myself at both
+sizes before I'd call either page's UI actually checked rather than just
+type-checked and structurally sound.
+
+Commits for this round:
+- [`f938546`](https://github.com/comp4020-agentic-coding-studio/comp4020-crit7-shuyangyuzu-cmd/commit/f938546) — corrected lecture-recording rule, carried through schema, demo data, and specs
+- [`48732f5`](https://github.com/comp4020-agentic-coding-studio/comp4020-crit7-shuyangyuzu-cmd/commit/48732f5) — session locations and same-timeslot multi-section time options
+- [`d5fdbbb`](https://github.com/comp4020-agentic-coding-studio/comp4020-crit7-shuyangyuzu-cmd/commit/d5fdbbb) — the `/courses/` + `/planner/` page split, sessionStorage preview persistence, and the lecture-overlay styling fix
+
+Deliberately out of scope this round, per my instruction: auto-generating
+plan combinations and the final confirm/withdraw UI (still phase 4), and
+pushing to `origin` or deploying anything.
