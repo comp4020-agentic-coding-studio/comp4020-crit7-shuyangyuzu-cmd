@@ -5,7 +5,7 @@ import { and, desc, eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/better-sqlite3";
 import { migrate } from "drizzle-orm/better-sqlite3/migrator";
 import { ConflictError, NotFoundError, ValidationError } from "./errors";
-import { type SessionSlot, findConflict } from "./scheduling";
+import { type KindedSlot, findConflict } from "./scheduling";
 import {
   type CandidateCourse,
   type ConfirmedEnrollment,
@@ -228,7 +228,7 @@ export function confirmEnrollment(choices: EnrollmentChoice[]): ConfirmedEnrollm
   return db.transaction((tx) => {
     tx.delete(confirmedEnrollments).run();
 
-    const slots: { label: string; session: SessionSlot }[] = [];
+    const slots: { label: string; session: KindedSlot }[] = [];
     const toInsert: EnrollmentChoice[] = [];
 
     for (const choice of choices) {

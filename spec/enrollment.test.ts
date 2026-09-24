@@ -51,9 +51,15 @@ describe("enrollment", () => {
     expect(body.map((row) => row.course.code).sort()).toEqual(["COMP1010", "COMP3120", "COMP4444", "MATH1013"]);
   });
 
-  it("rejects an unavoidable lecture clash and leaves the previous plan intact", async () => {
+  // COMP1010 and COMP2100 share an identical lecture time but that's no
+  // longer a rejection case (a lecture overlap is never blocking — see
+  // src/lib/scheduling.ts's classifyOverlap and PLAN.md). COMP2100 and
+  // STAT1008 are the demo pair with a genuine, unavoidable tutorial clash
+  // instead, so this is still a real transactional-rollback check: the
+  // rejection here is a real tutorial-vs-tutorial conflict, not a stale rule.
+  it("rejects an unavoidable tutorial clash and leaves the previous plan intact", async () => {
     const res = await json("/api/enrollment", "POST", {
-      choices: [choice("COMP1010", "Tutorial A"), choice("COMP2100", "Tutorial A")],
+      choices: [choice("COMP2100", "Tutorial A"), choice("STAT1008", "Tutorial A")],
     });
     expect(res.status).toBe(400);
     const err = (await res.json()) as { error: string };
@@ -61,6 +67,34 @@ describe("enrollment", () => {
 
     const after = await getEnrollment();
     expect(after.map((row) => row.course.code).sort()).toEqual(["COMP1010", "COMP3120", "COMP4444", "MATH1013"]);
+  });
+
+  // Lecture-vs-lecture overlap is explicitly allowed now: COMP1010 and
+  // COMP2100 share an identical lecture time, and that alone must not block
+  // adding COMP2100 alongside the existing plan's COMP1010. Tutorial choices
+  // here (COMP1010 Tutorial B is Wednesday, COMP2100 Tutorial A is Monday)
+  // are deliberately picked to not clash with each other, so this test
+  // isolates the lecture-vs-lecture rule rather than accidentally also
+  // depending on a tutorial pairing being compatible.
+  it("accepts a lecture-vs-lecture overlap: COMP1010 and COMP2100 share an identical lecture time but both can be confirmed", async () => {
+    const res = await json("/api/enrollment", "POST", {
+      choices: [choice("COMP1010", "Tutorial B"), choice("COMP2100", "Tutorial A")],
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as EnrollmentRow[];
+    expect(body.map((row) => row.course.code).sort()).toEqual(["COMP1010", "COMP2100"]);
+
+    // Restore the plan the remaining tests in this file expect, since this
+    // confirm replaced it.
+    const restore = await json("/api/enrollment", "POST", {
+      choices: [
+        choice("COMP1010", "Tutorial A"),
+        choice("COMP3120", "Tutorial B"),
+        choice("MATH1013", "Tutorial B"),
+        choice("COMP4444", "Tutorial B"),
+      ],
+    });
+    expect(restore.status).toBe(200);
   });
 
   it("rejects a clashing tutorial pairing but accepts the alternate tutorial for the same two courses", async () => {

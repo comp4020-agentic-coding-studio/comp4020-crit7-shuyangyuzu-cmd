@@ -35,8 +35,14 @@ function makeCourse(code: string) {
 describe("schema constraints", () => {
   it("rejects a session kind other than lecture/tutorial", () => {
     const course = makeCourse("TEST0001");
+    // "seminar" is deliberately invalid — this checks the raw SQLite CHECK
+    // constraint fires, so the `as` cast is needed to get an invalid value
+    // past the type-level "lecture" | "tutorial" the schema also enforces.
     expect(() =>
-      db.insert(sessions).values({ courseId: course.id, kind: "seminar", label: "X", dayOfWeek: 0, startMinutes: 0, endMinutes: 60 }).run(),
+      db
+        .insert(sessions)
+        .values({ courseId: course.id, kind: "seminar" as "lecture", label: "X", dayOfWeek: 0, startMinutes: 0, endMinutes: 60 })
+        .run(),
     ).toThrow(/CHECK constraint failed/);
   });
 

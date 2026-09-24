@@ -53,6 +53,15 @@ its lecture and tutorial times. That means:
 
 ## Rules that shape the whole build
 
+- A lecture can always be caught up on as a recording: a lecture overlapping
+  anything — another lecture, or a tutorial — is **never** a blocking
+  conflict, only ever worth a mild "available via recording" note. Only a
+  tutorial overlapping another tutorial actually blocks a plan, since exactly
+  one tutorial slot per course is really attended and there's no recording
+  fallback for it. (Revised after real use of the phase-3 planner page —
+  earlier phases of this file treated any overlap as blocking; that was
+  wrong.) This is a demo-prototype simplification, not a claim about every
+  real ANU course's recording policy.
 - Adjacent sessions (one ends exactly when the next starts) are **not** a
   conflict.
 - A hard constraint must always be satisfied; a soft preference only affects
@@ -105,9 +114,21 @@ Entities:
 
 - **Course** — `id`, `code`, `title`. Demo data, e.g. 6–8 rows.
 - **Session** — belongs to a `Course`; `kind` (`lecture` | `tutorial`),
-  `label`, `dayOfWeek`, `startTime`, `endTime`. Every `lecture` session for a
-  course is compulsory; `tutorial` sessions are mutually exclusive
-  alternatives — exactly one is chosen per course in a plan.
+  `label`, `dayOfWeek`, `startTime`, `endTime`, `location`. Every `lecture`
+  session for a course can be watched live or as a recording — it's always
+  shown on the timetable but never blocks a plan; `tutorial` sessions are
+  mutually exclusive alternatives — exactly one is chosen per course in a
+  plan, and tutorial-vs-tutorial is the only overlap that actually blocks.
+  Multiple `tutorial` rows on the same course can share the exact same
+  `(dayOfWeek, startTime, endTime)` — that represents the same class offered
+  as more than one section/room. For combination purposes (conflict-checking,
+  the generator, day/blackout computation) those rows collapse into one **time
+  option**; picking a time option with more than one section still requires
+  picking a concrete section/location before the plan can be confirmed (see
+  "Time options and sections" below). `location` is free text (e.g. a room
+  name); it's display/selection information only, never part of conflict
+  detection — two different courses' tutorials at the same time are a
+  conflict regardless of room.
 - **CandidateCourse** — a `Course` on my candidate list, plus whether I've
   marked it `required` for this planning session.
 - **PlanPreference** — a single settings row: desired course count (3 or 4),
@@ -128,35 +149,57 @@ Relationships: `Course 1—N Session`; `Course 1—1 CandidateCourse`;
 
 Planned API surface (interfaces, not implementations):
 
-- `GET /api/courses` — demo courses with their sessions.
+- `GET /api/courses` — demo courses with their sessions, including each
+  session's `location`.
 - `GET/POST/DELETE/PATCH /api/candidates` — candidate list membership and the
   `required` flag.
 - `GET/PUT /api/preferences` — course count target, blackout days, soft
   preferences.
 - `POST /api/plans/generate` — reads current candidates + preferences,
-  returns ranked feasible combinations (or an explained empty result).
+  returns ranked feasible combinations (or an explained empty result). Phase
+  4 only; covers auto-schedule operation 2 ("pick courses from the candidate
+  pool") from "Auto-schedule operations" above. Operation 1 ("schedule
+  tutorials for the current preview") is a narrower client-side search over a
+  fixed course set and may not need its own endpoint — decided when phase 4
+  is actually built.
 - `GET /api/enrollment` — the current confirmed plan.
 - `POST /api/enrollment/confirm` — replaces the confirmed plan transactionally.
+  Rejects a submission whose tutorial choice is a pending (section not yet
+  chosen) time option.
 - `DELETE /api/enrollment/:courseId` — withdraw one course from the confirmed
   plan.
 
 ## Implementation order
 
 1. **Database & demo data** — schema, migration, seed data with a deliberate
-   avoidable tutorial clash, an unavoidable lecture clash, and combinations
+   avoidable tutorial clash, an unavoidable tutorial clash, and combinations
    that satisfy different day preferences; read/write endpoints with input
    validation.
 2. **Candidates & manual timetable** — browse all courses/sessions without
    enrolling first; add/remove candidates, mark required, pick a tutorial,
    see it on a weekly grid; early conflict feedback that doesn't conflate a
    tutorial clash with "course unavailable."
-3. **Conditions & auto-generation** — course count, required courses,
-   blackout days, soft preferences; the generator itself; accurate
-   no-solution explanations; disclosed result caps.
-4. **Comparison & confirmation** — weekly-grid comparison of plans, confirm /
-   withdraw / adjust in one place, transactional replace, state survives a
+3. **Course browsing split from the timetable, manual scheduling completed,
+   session locations** — revised after real use of the phase-2 page: a
+   dedicated `/courses/` page (search/filter, candidate management, a
+   read-only confirmed-enrolment summary) separated out from `/planner/`
+   (which keeps a compact candidate/session list plus the full weekly grid);
+   working preview survives navigating between the two pages; manual
+   tutorial selection is the complete default path, with each time option's
+   conflict/location shown before it's picked; `location` added to sessions
+   with a migration, plus the time-option/section-pending handling above.
+   Auto-generation and its two operations (below) are **not** built this
+   phase — only planned and documented here.
+4. **Conditions & auto-generation** — course count, required courses,
+   blackout days, soft preferences (all computed from tutorials only, never
+   lectures — see "Rules that shape the whole build"); the two auto-schedule
+   operations under "Auto-schedule operations" above; accurate no-solution
+   explanations; disclosed result caps.
+5. **Comparison & confirmation** — weekly-grid comparison of plans, confirm /
+   withdraw / adjust in one place, reachable directly from `/planner/` (never
+   forcing a return to `/courses/`), transactional replace, state survives a
    reload.
-5. **Whole-app pass & deploy** — both viewports, loading/empty/error states,
+6. **Whole-app pass & deploy** — both viewports, loading/empty/error states,
    keyboard access, form labels; `pnpm check`; deploy to the existing Fly app;
    verify the live core flow and persistence; finish `PROCESS.md` and
    `reflections/crit-7.md`; check off the spec.
@@ -164,16 +207,27 @@ Planned API surface (interfaces, not implementations):
 ## Plan generation & ranking (decided in phase 3, implemented in phase 4)
 
 Settled while working on phase 3 (candidates & manual timetable), against the
-real 7-course demo dataset — not implemented yet; this is the contract phase
+real 8-course demo dataset — not implemented yet; this is the contract phase
 4's generator has to satisfy.
 
-- The generator runs a **full search** over the current demo-data scale (7
+- The generator runs a **full search** over the current demo-data scale (8
   courses, at most 3 tutorials each): enumerate every combination of
   candidates at the target course count, and every tutorial choice within
-  each, and keep every combination with no conflict (lecture-vs-lecture,
-  lecture-vs-tutorial, or tutorial-vs-tutorial). This is exhaustive, not a
-  sampled or early-exiting search, so the *count* of feasible plans reported
-  is always the true count at this data scale.
+  each, and keep every combination with no *blocking* conflict — i.e. no
+  tutorial-vs-tutorial overlap. A lecture overlapping anything (another
+  lecture or a tutorial) never eliminates a combination; it only ever
+  surfaces as a mild "available via recording" note once a plan is shown
+  (see "Rules that shape the whole build"). This is exhaustive, not a sampled
+  or early-exiting search, so the *count* of feasible plans reported is
+  always the true count at this data scale.
+- The same tutorial-only rule applies to blackout days, "avoid days" and
+  "days on campus": all three are computed from each chosen course's
+  **tutorial** session only. A lecture never counts toward days on campus and
+  never causes a plan to be excluded for landing on a blackout day — only the
+  attended tutorial slot does. (A student who blacks out a day can still have
+  a lecture nominally scheduled on it, since they'd only ever watch it as a
+  recording; the day only actually matters once something requires physical
+  attendance.)
 - Feasible plans are then sorted by the ranking rule below and **truncated to
   the top 50**; the UI paginates that top 50 at **10 per page**. The response
   and the UI both state the true total number of feasible plans found and
@@ -192,6 +246,57 @@ real 7-course demo dataset — not implemented yet; this is the contract phase
      order), so re-running generation against the same inputs always
      produces the same order — no arbitrary reshuffling of equally-good
      plans between runs.
+
+## Time options and sections (decided in phase 3, data support built in phase 3, used in phase 4)
+
+Added after real use of the planner page surfaced that "one tutorial per
+course" isn't quite right when a course offers the same class time in more
+than one room — e.g. two lab sections that meet at the same day/time in
+different rooms are one scheduling choice, not two.
+
+- A **time option** is the group of a course's `tutorial` sessions that share
+  the same `(dayOfWeek, startTime, endTime)`. Conflict-checking, the
+  generator, and blackout/avoid-day/days-on-campus computation all operate on
+  time options, not raw session rows — two sections of the same time option
+  never "conflict" with each other, and choosing between them never changes
+  whether a plan is feasible.
+- If a time option has exactly one section, choosing it auto-resolves to that
+  session — there's nothing to pick.
+- If a time option has more than one section, picking the time option alone
+  leaves the plan in a **"time scheduled, section pending"** state: it's
+  valid to preview and to include in a generated/manual timetable, but it
+  cannot be confirmed until a concrete section/location is chosen. The UI
+  must show this pending state plainly, not silently default to the first
+  room.
+- The final confirm step always records a concrete `tutorialSessionId`, and
+  the server validates it belongs to the claimed course and, implicitly,
+  that it's a real session row — a pending (no session chosen) time option
+  cannot be submitted to confirm at all.
+- Demo data includes at least one course with a genuine multi-section time
+  option, so this path is exercised by real data, not only by a synthetic
+  test fixture.
+
+## Auto-schedule operations (phase 4 contract, not implemented this round)
+
+Auto-generation is explicitly **optional**: reachable from a clear
+"auto-schedule" entry point, never forced and never run automatically. It
+covers two operations that must be presented and labelled as distinct,
+because they differ in whether the set of courses on the plan can change:
+
+1. **Schedule tutorials for the current preview** — the course set is fixed
+   (whatever's already in the working preview); this operation only chooses
+   a time option/section per course. Course set does **not** change.
+2. **Pick courses from the candidate pool** — given required courses, the
+   desired course count, and day conditions, this operation may add or drop
+   *which* courses are on the plan, not just their tutorial times. Course set
+   **can** change.
+
+Both operations must say up front, before running, whether they can change
+the course set. Both write their result into a **preview** the user must
+explicitly apply — never auto-replacing the current working preview and
+never touching the confirmed enrolment directly. After applying a generated
+result, manual adjustment (swapping a tutorial, removing a course) must
+still work exactly as it does on a hand-built preview.
 
 ## Open questions / risks
 

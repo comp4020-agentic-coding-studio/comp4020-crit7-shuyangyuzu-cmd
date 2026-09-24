@@ -79,8 +79,30 @@ agreed.
   that violates one is never offered. Soft preferences only change the order
   candidate plans are shown in; they must never eliminate an otherwise-valid
   plan.
+- A lecture can always be caught up on as a recording (revised after real use
+  of the planner page — an earlier draft of this rule treated any overlap as
+  blocking, which was wrong for this prototype): a lecture overlapping
+  anything, including another lecture, is never a blocking conflict, and
+  never eliminates a plan or counts toward a blackout day, an "avoid this
+  day" preference, or "days on campus." Only a tutorial overlapping another
+  tutorial blocks a plan, and only tutorial sessions count toward day-based
+  constraints and preferences. A lecture overlap may still surface as a mild,
+  non-blocking "available via recording" note in the UI. This is a
+  demo-prototype simplification, not a claim about any real ANU course's
+  actual recording policy — see `PLAN.md` for the worked scheduling
+  examples.
 - Two sessions that are exactly back-to-back (one ends when the next starts)
   are not a conflict. Travel time between buildings is not modelled.
+- When a tutorial time option groups more than one section/room (same
+  course, same day/start/end, different location), the UI must never
+  silently default to the first section — it must show that time as
+  scheduled but the section as pending, allow it in a preview, and block
+  final confirmation until a concrete section is chosen. The server must
+  validate that a submitted session id actually belongs to the course and
+  timeslot being confirmed.
+- Once auto-generation exists (phase 4+), confirming or withdrawing a course
+  must remain directly reachable from the planner page itself — never a
+  feature that forces a trip back to the course-browsing page first.
 - When required courses, blackout days, or thin candidates leave no feasible
   plan, say so with a specific, accurate reason grounded in what actually
   conflicts — never fabricate or generalise a reason. A single clashing

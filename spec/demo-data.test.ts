@@ -62,13 +62,47 @@ describe("demo data", () => {
     ).toBeNull();
   });
 
-  it("has an unavoidable lecture clash: COMP1010 and COMP2100 conflict no matter which tutorials are chosen", async () => {
+  // Revised rule (PLAN.md): a lecture can always be watched as a recording,
+  // so a lecture overlapping anything is never blocking, even two identical
+  // lecture times for two different courses. COMP1010 and COMP2100 share the
+  // exact same Monday lecture slot on purpose, to check this mechanically
+  // rather than only asserting it in a comment.
+  it("does not block on a lecture-vs-lecture overlap: COMP1010 and COMP2100 share an identical lecture time but the lectures alone never conflict", async () => {
     const courses = (await fetch(new URL("/api/courses", baseUrl)).then((r) => r.json())) as CourseRow[];
     const c1010 = courses.find((c) => c.code === "COMP1010")!;
     const c2100 = courses.find((c) => c.code === "COMP2100")!;
-    for (const t1 of c1010.sessions.filter((s) => s.kind === "tutorial")) {
-      for (const t2 of c2100.sessions.filter((s) => s.kind === "tutorial")) {
-        expect(findConflict([...slotsFor(c1010, t1), ...slotsFor(c2100, t2)])).not.toBeNull();
+    const l1010 = c1010.sessions.find((s) => s.kind === "lecture")!;
+    const l2100 = c2100.sessions.find((s) => s.kind === "lecture")!;
+    expect(l1010.dayOfWeek).toBe(l2100.dayOfWeek);
+    expect(l1010.startMinutes).toBe(l2100.startMinutes);
+    expect(l1010.endMinutes).toBe(l2100.endMinutes);
+    // Checking the lectures alone (not paired with any tutorial choice,
+    // which may or may not clash independently of this) is what actually
+    // isolates the lecture-vs-lecture rule.
+    expect(
+      findConflict([
+        { label: `${c1010.code} ${l1010.label}`, session: l1010 },
+        { label: `${c2100.code} ${l2100.label}`, session: l2100 },
+      ]),
+    ).toBeNull();
+  });
+
+  it("has an unavoidable tutorial clash: COMP2100 and STAT1008 conflict no matter which tutorial is chosen", async () => {
+    const courses = (await fetch(new URL("/api/courses", baseUrl)).then((r) => r.json())) as CourseRow[];
+    const c2100 = courses.find((c) => c.code === "COMP2100")!;
+    const stat1008 = courses.find((c) => c.code === "STAT1008")!;
+    const c2100Tutorials = c2100.sessions.filter((s) => s.kind === "tutorial");
+    const statTutorials = stat1008.sessions.filter((s) => s.kind === "tutorial");
+    expect(c2100Tutorials.length).toBeGreaterThan(1);
+    expect(statTutorials.length).toBeGreaterThan(0);
+    for (const t1 of c2100Tutorials) {
+      for (const t2 of statTutorials) {
+        expect(
+          findConflict([
+            ...slotsFor(c2100, t1).filter((s) => s.session.kind === "tutorial"),
+            ...slotsFor(stat1008, t2).filter((s) => s.session.kind === "tutorial"),
+          ]),
+        ).not.toBeNull();
       }
     }
   });

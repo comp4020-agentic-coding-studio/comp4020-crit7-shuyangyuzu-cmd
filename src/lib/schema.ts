@@ -43,7 +43,7 @@ export const sessions = sqliteTable(
     // "lecture" sessions are compulsory for every course they belong to.
     // "tutorial" sessions are alternatives: a course's tutorials are the
     // options a plan chooses exactly one from.
-    kind: text().notNull(),
+    kind: text().notNull().$type<"lecture" | "tutorial">(),
     label: text().notNull(),
     dayOfWeek: int("day_of_week").notNull(),
     startMinutes: int("start_minutes").notNull(),

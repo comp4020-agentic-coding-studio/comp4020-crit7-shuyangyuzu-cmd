@@ -16,11 +16,19 @@ type CourseSeed = {
   sessions: SessionSeed[];
 };
 
-// Seven fictional demo courses, hand-picked to cover every scenario the
-// demo-data requirement names (see PLAN.md and the Phase 2 report):
-// - COMP1010 vs COMP2100 share an identical lecture time -> an unavoidable
-//   clash: no tutorial choice can route around two compulsory lectures that
-//   overlap.
+// Eight fictional demo courses, hand-picked to cover every scenario the
+// demo-data requirement names (see PLAN.md and the Phase 2/3 reports). Under
+// this prototype's rule (a lecture can always be watched as a recording, so
+// only a tutorial-vs-tutorial overlap actually blocks a plan — see
+// src/lib/scheduling.ts's classifyOverlap), the scenarios are:
+// - COMP1010 and COMP2100 share an identical lecture time -> a *non*-
+//   blocking lecture overlap: both courses remain freely combinable, shown
+//   only as a mild "available via recording" hint, never an error.
+// - COMP2100 and STAT1008 have an unavoidable tutorial clash: STAT1008 has a
+//   single tutorial time (with two same-time sections — see the "same
+//   timeslot, different section" note below) that overlaps both of
+//   COMP2100's tutorial options, so no tutorial choice on either side
+//   routes around it.
 // - COMP1010's "Tutorial B" clashes with COMP3120's "Tutorial A", but each
 //   course has another tutorial that avoids it -> an avoidable clash.
 // - COMP4444's "Tutorial B" ends at the exact minute ENGN2222's lecture
@@ -31,6 +39,10 @@ type CourseSeed = {
 // (Tutorial A) + COMP3120 (Tutorial B) + MATH1013 (Tutorial B) + COMP4444
 // (Tutorial B) has no overlapping sessions at all — checked mechanically in
 // spec/demo-data.test.ts, not just asserted here.
+//
+// STAT1008 later gains a second same-time tutorial section (see the
+// session-location follow-up commit) to demonstrate a course offering the
+// same time option as more than one section/room.
 const DEMO_COURSES: CourseSeed[] = [
   {
     code: "COMP1010",
@@ -45,9 +57,16 @@ const DEMO_COURSES: CourseSeed[] = [
     code: "COMP2100",
     title: "Software Engineering (demo)",
     sessions: [
+      // Shares COMP1010's exact Monday lecture time on purpose: a lecture
+      // overlap is never blocking under this prototype's rule, so the two
+      // courses stay freely combinable — only a mild "available via
+      // recording" hint, never an error.
       { kind: "lecture", label: "Lecture", dayOfWeek: 0, startMinutes: 600, endMinutes: 650 },
-      { kind: "tutorial", label: "Tutorial A", dayOfWeek: 1, startMinutes: 600, endMinutes: 650 },
-      { kind: "tutorial", label: "Tutorial B", dayOfWeek: 3, startMinutes: 600, endMinutes: 650 },
+      // Both tutorials are Monday, chosen so each one overlaps STAT1008's
+      // only tutorial time option below - an unavoidable tutorial clash
+      // between these two courses regardless of which tutorial is chosen.
+      { kind: "tutorial", label: "Tutorial A", dayOfWeek: 0, startMinutes: 800, endMinutes: 850 },
+      { kind: "tutorial", label: "Tutorial B", dayOfWeek: 0, startMinutes: 830, endMinutes: 880 },
     ],
   },
   {
@@ -94,6 +113,18 @@ const DEMO_COURSES: CourseSeed[] = [
       { kind: "lecture", label: "Lecture", dayOfWeek: 4, startMinutes: 710, endMinutes: 760 },
       { kind: "tutorial", label: "Tutorial A", dayOfWeek: 0, startMinutes: 660, endMinutes: 710 },
       { kind: "tutorial", label: "Tutorial B", dayOfWeek: 2, startMinutes: 900, endMinutes: 950 },
+    ],
+  },
+  {
+    code: "STAT1008",
+    title: "Introduction to Statistics (demo)",
+    sessions: [
+      { kind: "lecture", label: "Lecture", dayOfWeek: 1, startMinutes: 780, endMinutes: 830 },
+      // The only tutorial time option this course offers. It's placed
+      // (Monday, 820-870) so it overlaps *both* of COMP2100's tutorials
+      // above, making that pair an unavoidable tutorial clash for
+      // spec/demo-data.test.ts to check mechanically.
+      { kind: "tutorial", label: "Tutorial A", dayOfWeek: 0, startMinutes: 820, endMinutes: 870 },
     ],
   },
 ];
