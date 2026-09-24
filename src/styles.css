@@ -39,11 +39,44 @@ button {
   padding-inline-start: 1.2rem;
 }
 
-/* Planner page (Phase 3): wider than the default 40rem so a 7-column weekly
-   grid has room, scoped to this page only via the .planner class so the
-   guestbook/readme pages keep their narrower column. */
-main.planner {
+/* Planner and courses pages (Phase 3): wider than the default 40rem, since
+   both a 7-column weekly grid and a browsable course list with search/filter
+   controls need more room than the guestbook/readme pages' narrower column. */
+main.planner,
+main.courses {
   max-width: 68rem;
+}
+
+/* Planner page layout (Phase 3 revision): a compact left list you schedule
+   from, and a large grid on the right — MyTimetable's split, not a wizard.
+   Stacks on narrow viewports via the media query below. */
+.planner-layout {
+  display: flex;
+  gap: 1.5rem;
+  align-items: flex-start;
+}
+
+.planner-left {
+  flex: 0 0 22rem;
+  min-width: 0;
+}
+
+.planner-right {
+  flex: 1;
+  min-width: 0;
+}
+
+.course-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  align-items: center;
+  margin-block: 1rem;
+}
+
+.course-filters input {
+  flex: 1;
+  min-width: 12rem;
 }
 
 .disclaimer {
@@ -138,6 +171,47 @@ main.planner {
   color: #8a6100;
 }
 
+/* Mild, non-blocking note: a lecture overlapping something else. Never the
+   alarming red of .conflict-note — a lecture can always be caught up on as
+   a recording, so this is informational only. */
+.lecture-hint {
+  color: #0b5fff;
+}
+
+.schedule-card {
+  border: 1px solid #ddd;
+  border-radius: 0.5rem;
+  padding: 1rem;
+  margin-block-end: 1rem;
+}
+
+.schedule-card h3 {
+  margin-block-start: 0;
+}
+
+.tutorial-options {
+  border: none;
+  padding: 0;
+  margin: 0.75rem 0 0;
+}
+
+.tutorial-options legend {
+  font-weight: 600;
+  padding: 0;
+}
+
+.room-picker {
+  border: none;
+  padding: 0;
+  margin: 0.25rem 0 0.75rem 1.5rem;
+}
+
+.room-option {
+  display: block;
+  font-size: 0.9rem;
+  margin-block-end: 0.25rem;
+}
+
 .weekly-grid {
   display: grid;
   grid-template-columns: repeat(7, 1fr);
@@ -178,21 +252,47 @@ main.planner {
   border: 1px solid #d33;
 }
 
+/* Time is scheduled but the section/room still needs an explicit pick
+   (PLAN.md's "time scheduled, section pending" state) — amber, not red:
+   nothing is wrong yet, there's just a choice left to make. */
+.session-block.pending {
+  background: #fff6da;
+  border: 1px dashed #b98900;
+}
+
+/* A lecture overlapping something else — mild, never the blocking red of
+   .conflict, since a lecture can always be caught up on as a recording. */
+.session-block.lecture-hint-block {
+  outline: 2px dashed #0b5fff;
+  outline-offset: -2px;
+}
+
 .empty-day {
   color: #888;
   font-size: 0.85rem;
 }
 
 @media (max-width: 640px) {
-  main.planner {
+  main.planner,
+  main.courses {
     max-width: 100%;
+  }
+
+  .planner-layout {
+    flex-direction: column;
+  }
+
+  .planner-left {
+    flex-basis: auto;
+    width: 100%;
   }
 
   .weekly-grid {
     grid-template-columns: 1fr;
   }
 
-  .candidate-controls {
+  .candidate-controls,
+  .course-filters {
     flex-direction: column;
     align-items: flex-start;
   }

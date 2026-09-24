@@ -1,0 +1,333 @@
+---
+// Phase 3 (page split): course browsing, search/filter, and candidate-list
+// management live here. Actually scheduling a tutorial time/room and seeing
+// the weekly grid is the planner page's job (/planner/) — this page never
+// touches the client-only preview at all, so there's nothing here to
+// reconcile when a candidate is added or removed; /planner/ does that
+// reconciliation itself against the server's candidate list on load.
+import { listCandidates, listConfirmedEnrollments, listCourses } from "../lib/db";
+import { groupTutorialTimeOptions } from "../lib/scheduling";
+import "../styles.css";
+
+const courses = listCourses();
+const candidates = listCandidates();
+const confirmed = listConfirmedEnrollments();
+
+const DAY_NAMES = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+
+function pad(n: number): string {
+  return String(n).padStart(2, "0");
+}
+function fmtTime(minutes: number): string {
+  return `${pad(Math.floor(minutes / 60))}:${pad(minutes % 60)}`;
+}
+function fmtSession(s: { dayOfWeek: number; startMinutes: number; endMinutes: number }): string {
+  return `${DAY_NAMES[s.dayOfWeek]} ${fmtTime(s.startMinutes)}–${fmtTime(s.endMinutes)}`;
+}
+
+const candidateByCourseId = new Map(candidates.map((c) => [c.courseId, c]));
+
+// Embedded so the client script's search/filter never has to re-fetch or
+// re-derive anything the server already rendered — it only ever hides/shows
+// the server-rendered cards.
+const coursesDataJson = JSON.stringify(
+  courses.map((c) => ({ id: c.id, code: c.code, title: c.title, isCandidate: candidateByCourseId.has(c.id) })),
+).replace(/</g, "\\u003c");
+---
+
+<!doctype html>
+<html lang="en-AU">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Courses (demo) — COMP4020 prototype</title>
+  </head>
+  <body>
+    <nav aria-label="site">
+      <a href="/">Guestbook</a>
+      <a href="/courses/">Courses</a>
+      <a href="/planner/">Planner</a>
+      <a href="/readme/">About</a>
+    </nav>
+    <main class="courses">
+      <h1>Courses</h1>
+
+      <p class="disclaimer" role="note">
+        <strong>Prototype, not an official ANU service.</strong> This is a student-built
+        course-planning tool for a COMP4020 assignment — it is not Programs and Courses, ANUHub
+        or Timetable, and never contacts any real ANU system. Every course, course code and
+        session time on this page is fictional demo data. There is no login: everyone who opens
+        this page is viewing and editing the same single demo student's saved candidates and
+        confirmed enrolment.
+      </p>
+
+      <section aria-labelledby="browse-heading">
+        <h2 id="browse-heading">All demo courses</h2>
+        <p>
+          Search or filter to find a course, then add it as a candidate here. Choosing a tutorial
+          time and seeing it on a weekly grid happens on the <a href="/planner/">planner page</a> —
+          this page is only for building up your candidate list.
+        </p>
+        <div class="course-filters">
+          <label for="course-search">Search</label>
+          <input type="search" id="course-search" placeholder="Course code or title" autocomplete="off" />
+          <label for="course-status-filter">Show</label>
+          <select id="course-status-filter">
+            <option value="all">All courses</option>
+            <option value="candidate">My candidates only</option>
+            <option value="not-candidate">Not yet a candidate</option>
+          </select>
+        </div>
+        <p id="course-filter-empty-note" hidden>No courses match this search/filter.</p>
+        <div id="course-list">
+          {
+            courses.map((course) => {
+              const candidate = candidateByCourseId.get(course.id);
+              const lectures = course.sessions.filter((s) => s.kind === "lecture");
+              const tutorials = course.sessions.filter((s) => s.kind === "tutorial");
+              const timeOptions = groupTutorialTimeOptions(tutorials);
+              return (
+                <article
+                  class="course-card"
+                  data-course-id={course.id}
+                  data-code={course.code.toLowerCase()}
+                  data-title={course.title.toLowerCase()}
+                  data-is-candidate={candidate ? "true" : "false"}
+                >
+                  <h3>
+                    {course.code} — {course.title}
+                  </h3>
+                  <div class="sessions">
+                    <p class="sessions-label">Lecture(s), fixed (always shown, never blocks a plan — it can be caught up on as a recording):</p>
+                    <ul>
+                      {lectures.map((l) => (
+                        <li>
+                          {l.label}: {fmtSession(l)} — {l.location}
+                        </li>
+                      ))}
+                    </ul>
+                    <p class="sessions-label">Tutorial time options, choose one on the planner if this course is in your preview:</p>
+                    <ul>
+                      {timeOptions.map((option) => (
+                        <li>
+                          {fmtSession(option)}
+                          {option.sections.length > 1 ? (
+                            <Fragment>
+                              {" "}
+                              — {option.sections.length} sections available (
+                              {option.sections.map((s) => s.location).join(", ")}); pick a room on the planner
+                            </Fragment>
+                          ) : (
+                            <Fragment> — {option.sections[0].location}</Fragment>
+                          )}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                  <div class="candidate-controls" data-course-id={course.id}>
+                    <button
+                      type="button"
+                      class="candidate-toggle"
+                      data-action={candidate ? "remove" : "add"}
+                      data-course-id={course.id}
+                    >
+                      {candidate ? "Remove from candidates" : "Add to candidates"}
+                    </button>
+                    {candidate && (
+                      <label class="required-toggle">
+                        <input
+                          type="checkbox"
+                          class="required-checkbox"
+                          data-course-id={course.id}
+                          checked={candidate.required === 1}
+                        />
+                        Required for this plan (locks it in for this planning session only — not a
+                        verified degree requirement)
+                      </label>
+                    )}
+                  </div>
+                </article>
+              );
+            })
+          }
+        </div>
+      </section>
+
+      <section aria-labelledby="candidates-heading">
+        <h2 id="candidates-heading">Your candidate list</h2>
+        <p>
+          {candidates.length > 0 ? (
+            <>
+              Once you're happy with this list, head to the <a href="/planner/">planner</a> to
+              choose tutorial times and see your weekly grid.
+            </>
+          ) : (
+            "Add a course above to start building your candidate list."
+          )}
+        </p>
+        <p id="candidates-empty-note" hidden={candidates.length > 0}>
+          You haven't added any candidates yet.
+        </p>
+        <ul id="candidate-list">
+          {
+            candidates.map((c) => (
+              <li data-course-id={c.courseId}>
+                <span>{c.course.code}</span>
+                {c.required === 1 && <span class="badge">Required</span>}
+              </li>
+            ))
+          }
+        </ul>
+        <p id="candidate-feedback" role="status" aria-live="polite"></p>
+      </section>
+
+      <section aria-labelledby="confirmed-heading">
+        <h2 id="confirmed-heading">Your confirmed enrolment</h2>
+        <p>
+          Read-only on this page — confirming a new plan or ending this one is a later phase, not
+          built here yet. Nothing on this page (adding, removing or requiring a candidate) ever
+          changes what's listed here.
+        </p>
+        {
+          confirmed.length === 0 ? (
+            <p>You don't have a confirmed enrolment yet.</p>
+          ) : (
+            <ul id="confirmed-list">
+              {confirmed.map((e) => (
+                <li>
+                  {e.course.code} — tutorial {e.tutorialSession.label}: {fmtSession(e.tutorialSession)} —{" "}
+                  {e.tutorialSession.location}
+                </li>
+              ))}
+            </ul>
+          )
+        }
+      </section>
+    </main>
+    <script type="application/json" id="courses-filter-data" set:html={coursesDataJson} />
+    <script>
+      type CourseFilterRow = { id: number; code: string; title: string; isCandidate: boolean };
+
+      const dataEl = document.getElementById("courses-filter-data");
+      const rows = JSON.parse(dataEl?.textContent ?? "[]") as CourseFilterRow[];
+      const rowById = new Map(rows.map((r) => [r.id, r]));
+
+      const searchInput = document.getElementById("course-search") as HTMLInputElement;
+      const statusFilter = document.getElementById("course-status-filter") as HTMLSelectElement;
+      const filterEmptyNote = document.getElementById("course-filter-empty-note")!;
+      const courseListEl = document.getElementById("course-list")!;
+      const candidateListEl = document.getElementById("candidate-list")!;
+      const candidatesEmptyNote = document.getElementById("candidates-empty-note")!;
+      const candidateFeedback = document.getElementById("candidate-feedback")!;
+
+      function applyFilter() {
+        const query = searchInput.value.trim().toLowerCase();
+        const status = statusFilter.value;
+        let visibleCount = 0;
+        for (const card of courseListEl.querySelectorAll<HTMLElement>(".course-card")) {
+          const courseId = Number(card.dataset.courseId);
+          const row = rowById.get(courseId);
+          const matchesQuery = !query || card.dataset.code!.includes(query) || card.dataset.title!.includes(query);
+          const isCandidate = row?.isCandidate ?? card.dataset.isCandidate === "true";
+          const matchesStatus = status === "all" || (status === "candidate" && isCandidate) || (status === "not-candidate" && !isCandidate);
+          const visible = matchesQuery && matchesStatus;
+          card.hidden = !visible;
+          if (visible) visibleCount++;
+        }
+        filterEmptyNote.hidden = visibleCount > 0;
+      }
+
+      searchInput.addEventListener("input", applyFilter);
+      statusFilter.addEventListener("change", applyFilter);
+
+      async function addCandidate(courseId: number) {
+        const res = await fetch("/api/candidates", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ courseId }),
+        });
+        if (!res.ok) {
+          candidateFeedback.textContent = `Could not add this course as a candidate (${res.status}).`;
+          return;
+        }
+        const body = (await res.json()) as { course: { code: string } };
+        const card = courseListEl.querySelector<HTMLElement>(`.course-card[data-course-id="${courseId}"]`)!;
+        card.dataset.isCandidate = "true";
+        const row = rowById.get(courseId);
+        if (row) row.isCandidate = true;
+        const controls = card.querySelector(".candidate-controls")!;
+        controls.innerHTML = `<button type="button" class="candidate-toggle" data-action="remove" data-course-id="${courseId}">Remove from candidates</button>
+          <label class="required-toggle">
+            <input type="checkbox" class="required-checkbox" data-course-id="${courseId}" />
+            Required for this plan (locks it in for this planning session only — not a verified degree requirement)
+          </label>`;
+        const li = document.createElement("li");
+        li.dataset.courseId = String(courseId);
+        li.innerHTML = `<span>${body.course.code}</span>`;
+        candidateListEl.appendChild(li);
+        candidatesEmptyNote.hidden = true;
+        candidateFeedback.textContent = "";
+        applyFilter();
+      }
+
+      async function removeCandidate(courseId: number) {
+        const res = await fetch(`/api/candidates?courseId=${courseId}`, { method: "DELETE", headers: { origin: location.origin } });
+        if (!res.ok) {
+          candidateFeedback.textContent = `Could not remove this course from your candidates (${res.status}).`;
+          return;
+        }
+        const card = courseListEl.querySelector<HTMLElement>(`.course-card[data-course-id="${courseId}"]`)!;
+        card.dataset.isCandidate = "false";
+        const row = rowById.get(courseId);
+        if (row) row.isCandidate = false;
+        const controls = card.querySelector(".candidate-controls")!;
+        controls.innerHTML = `<button type="button" class="candidate-toggle" data-action="add" data-course-id="${courseId}">Add to candidates</button>`;
+        candidateListEl.querySelector(`li[data-course-id="${courseId}"]`)?.remove();
+        candidatesEmptyNote.hidden = candidateListEl.children.length > 0;
+        candidateFeedback.textContent = `Removed from your candidates. This never changes your confirmed enrolment, and if it was in your planner preview, the planner will drop it from the preview next time you open it.`;
+        applyFilter();
+      }
+
+      async function setRequired(courseId: number, required: boolean) {
+        const res = await fetch("/api/candidates", {
+          method: "PATCH",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ courseId, required }),
+        });
+        if (!res.ok) {
+          candidateFeedback.textContent = `Could not update the required flag (${res.status}).`;
+          return;
+        }
+        const li = candidateListEl.querySelector(`li[data-course-id="${courseId}"]`);
+        if (li) {
+          const existingBadge = li.querySelector(".badge");
+          if (required && !existingBadge) {
+            const badge = document.createElement("span");
+            badge.className = "badge";
+            badge.textContent = "Required";
+            li.appendChild(badge);
+          } else if (!required && existingBadge) {
+            existingBadge.remove();
+          }
+        }
+      }
+
+      courseListEl.addEventListener("click", (event) => {
+        const button = (event.target as HTMLElement).closest<HTMLButtonElement>(".candidate-toggle");
+        if (!button) return;
+        const courseId = Number(button.dataset.courseId);
+        if (button.dataset.action === "add") addCandidate(courseId);
+        else removeCandidate(courseId);
+      });
+
+      courseListEl.addEventListener("change", (event) => {
+        const target = event.target as HTMLInputElement;
+        if (!target.classList.contains("required-checkbox")) return;
+        const courseId = Number(target.dataset.courseId);
+        setRequired(courseId, target.checked);
+      });
+
+      applyFilter();
+    </script>
+  </body>
+</html>

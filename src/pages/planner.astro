@@ -1,11 +1,18 @@
 ---
-// Phase 3: candidate courses + a manual, click-through timetable preview.
-// Candidate/required state comes from the database (src/lib/db.ts) and is
-// the true, persisted state shown here. The preview itself is deliberately
-// NOT rendered here at all: PLAN.md/CLAUDE.md require it to start empty
-// (never auto-populated from candidates) and it doesn't need to survive a
-// reload, so it's built entirely client-side in the <script> below, from the
-// same candidate/course data embedded on this page.
+// Phase 3 (page split + manual scheduling): MyTimetable-style layout — a
+// compact left list of candidates you schedule from, and a large weekly grid
+// on the right that updates the moment you change anything. Adding/removing
+// candidates and the required flag now live on /courses/; this page only
+// reads the candidate list (server truth) to build the left panel from.
+//
+// The preview itself (which candidates are "in" this visit, which tutorial
+// time/room each has) is still never persisted server-side — PLAN.md/
+// CLAUDE.md require it to start empty on a first visit and never silently
+// become the confirmed enrolment. What's new this round: it now survives
+// navigating to /courses/ and back, via sessionStorage (see the client
+// script), reconciled on load against whichever courses are still actual
+// candidates — so removing a candidate on /courses/ can never leave a ghost
+// entry in a stale preview.
 import { listCandidates, listConfirmedEnrollments, listCourses } from "../lib/db";
 import "../styles.css";
 
@@ -25,8 +32,6 @@ function fmtSession(s: { dayOfWeek: number; startMinutes: number; endMinutes: nu
   return `${DAY_NAMES[s.dayOfWeek]} ${fmtTime(s.startMinutes)}–${fmtTime(s.endMinutes)}`;
 }
 
-const candidateByCourseId = new Map(candidates.map((c) => [c.courseId, c]));
-
 // Embedded as the client script's only source of truth for course/session
 // data and the persisted candidate list, so the JS re-render it does on load
 // can never drift from what the server actually has. `<script type=
@@ -44,16 +49,17 @@ const plannerDataJson = JSON.stringify({
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Course planner (demo) — COMP4020 prototype</title>
+    <title>Planner (demo) — COMP4020 prototype</title>
   </head>
   <body>
     <nav aria-label="site">
       <a href="/">Guestbook</a>
+      <a href="/courses/">Courses</a>
       <a href="/planner/">Planner</a>
       <a href="/readme/">About</a>
     </nav>
     <main class="planner">
-      <h1>Course planner</h1>
+      <h1>Planner</h1>
 
       <p class="disclaimer" role="note">
         <strong>Prototype, not an official ANU service.</strong> This is a student-built
@@ -61,120 +67,53 @@ const plannerDataJson = JSON.stringify({
         or Timetable, and never contacts any real ANU system. Every course, course code and
         session time on this page is fictional demo data. There is no login: everyone who opens
         this page is viewing and editing the same single demo student's saved candidates and
-        confirmed enrolment.
+        confirmed enrolment. Lectures are always shown but never block a plan here — this
+        prototype assumes a lecture can always be caught up on as a recording; only a clash
+        between two tutorials actually blocks anything.
       </p>
 
-      <section aria-labelledby="browse-heading">
-        <h2 id="browse-heading">All demo courses</h2>
-        <p>
-          Every course's lecture and tutorial times are listed below whether or not it's on your
-          candidate list yet — you don't need to add a course as a candidate to see its sessions.
-        </p>
-        <div id="course-list">
-          {
-            courses.map((course) => {
-              const candidate = candidateByCourseId.get(course.id);
-              const lectures = course.sessions.filter((s) => s.kind === "lecture");
-              const tutorials = course.sessions.filter((s) => s.kind === "tutorial");
-              return (
-                <article class="course-card" data-course-id={course.id}>
+      <section aria-labelledby="candidates-heading" class="planner-layout">
+        <div class="planner-left">
+          <h2 id="candidates-heading">Your candidates</h2>
+          <p>
+            Tick a candidate to add it to your current preview below, then pick a tutorial time
+            (and a room, if that time has more than one). Add or remove candidates on the{" "}
+            <a href="/courses/">courses page</a>.
+          </p>
+          <p id="candidates-empty-note" hidden={candidates.length > 0}>
+            You don't have any candidates yet — add some on the <a href="/courses/">courses page</a>{" "}
+            first.
+          </p>
+          <div id="candidate-schedule-list">
+            {
+              // Server-rendered as "nothing chosen yet" for every candidate —
+              // exactly what an empty preview looks like, since the preview
+              // itself only exists client-side (sessionStorage). The client
+              // script re-renders this same list immediately on load once it
+              // knows the real (reconciled) preview state; until JS runs, a
+              // reader still sees every candidate and an honest starting
+              // point rather than a blank div.
+              candidates.map((c) => (
+                <article class="schedule-card" data-course-id={c.courseId}>
                   <h3>
-                    {course.code} — {course.title}
+                    {c.course.code} {c.required === 1 && <span class="badge">Required</span>}
                   </h3>
-                  <div class="sessions">
-                    <p class="sessions-label">Lecture(s), fixed:</p>
-                    <ul>
-                      {lectures.map((l) => (
-                        <li>
-                          {l.label}: {fmtSession(l)}
-                        </li>
-                      ))}
-                    </ul>
-                    <p class="sessions-label">Tutorials, choose one if this course is in your preview:</p>
-                    <ul>
-                      {tutorials.map((t) => (
-                        <li>
-                          {t.label}: {fmtSession(t)}
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                  <div class="candidate-controls" data-course-id={course.id}>
-                    <button
-                      type="button"
-                      class="candidate-toggle"
-                      data-action={candidate ? "remove" : "add"}
-                      data-course-id={course.id}
-                    >
-                      {candidate ? "Remove from candidates" : "Add to candidates"}
-                    </button>
-                    {candidate && (
-                      <Fragment>
-                        <label class="required-toggle">
-                          <input
-                            type="checkbox"
-                            class="required-checkbox"
-                            data-course-id={course.id}
-                            checked={candidate.required === 1}
-                          />
-                          Required for this plan (locks it in for this planning session only — not a
-                          verified degree requirement)
-                        </label>
-                        <label class="preview-toggle">
-                          <input type="checkbox" class="preview-include-checkbox" data-course-id={course.id} />
-                          Include in current preview
-                        </label>
-                      </Fragment>
-                    )}
-                  </div>
+                  <label class="preview-toggle">
+                    <input type="checkbox" class="preview-include-checkbox" data-course-id={c.courseId} />
+                    Include in current preview
+                  </label>
                 </article>
-              );
-            })
-          }
+              ))
+            }
+          </div>
+          <div id="conflict-banners" role="status" aria-live="polite"></div>
         </div>
-      </section>
-
-      <section aria-labelledby="candidates-heading">
-        <h2 id="candidates-heading">Your candidate list</h2>
-        <p>
-          A status summary, kept separate from the course browser above and the preview below —
-          use the controls on a course card to change your candidates.
-        </p>
-        <p id="candidates-empty-note" hidden={candidates.length > 0}>
-          You haven't added any candidates yet.
-        </p>
-        <ul id="candidate-list">
-          {
-            candidates.map((c) => (
-              <li data-course-id={c.courseId}>
-                <span>{c.course.code}</span>
-                {c.required === 1 && <span class="badge">Required</span>}
-                <span class="preview-status" data-course-id={c.courseId}>
-                  Not in current preview
-                </span>
-              </li>
-            ))
-          }
-        </ul>
-        <p id="candidate-feedback" role="status" aria-live="polite"></p>
-      </section>
-
-      <section aria-labelledby="preview-heading">
-        <h2 id="preview-heading">Current preview timetable</h2>
-        <p>
-          This preview lives only in your browser for this visit — adjusting it never changes your
-          confirmed enrolment below, and it doesn't persist across a reload. Tick "Include in
-          current preview" on a candidate above to add it here, then choose a tutorial for it.
-        </p>
-        <p id="preview-empty-note">
-          Nothing is in your current preview yet. Add a candidate above and tick "Include in
-          current preview" to start.
-        </p>
-        <div id="preview-panel" hidden>
-          <div id="lecture-conflicts" role="status" aria-live="polite"></div>
-          <div id="preview-courses"></div>
-          <h3>Weekly grid</h3>
-          <div id="weekly-grid" class="weekly-grid"></div>
+        <div class="planner-right">
+          <h2>Weekly grid</h2>
+          <p id="preview-empty-note">
+            Nothing is in your current preview yet. Tick a candidate on the left to add it.
+          </p>
+          <div id="weekly-grid" class="weekly-grid" hidden></div>
         </div>
       </section>
 
@@ -182,8 +121,8 @@ const plannerDataJson = JSON.stringify({
         <h2 id="confirmed-heading">Your confirmed enrolment</h2>
         <p>
           Read-only on this page — confirming a new plan or ending this one is a later phase, not
-          built here yet. Nothing on this page (adding, removing or requiring a candidate;
-          adjusting the preview) ever changes what's listed here.
+          built here yet. Nothing on this page (your preview, choosing a tutorial or room) ever
+          changes what's listed here.
         </p>
         {
           confirmed.length === 0 ? (
@@ -192,7 +131,8 @@ const plannerDataJson = JSON.stringify({
             <ul id="confirmed-list">
               {confirmed.map((e) => (
                 <li>
-                  {e.course.code} — tutorial {e.tutorialSession.label}: {fmtSession(e.tutorialSession)}
+                  {e.course.code} — tutorial {e.tutorialSession.label}: {fmtSession(e.tutorialSession)} —{" "}
+                  {e.tutorialSession.location}
                 </li>
               ))}
             </ul>
@@ -202,15 +142,16 @@ const plannerDataJson = JSON.stringify({
     </main>
     <script type="application/json" id="planner-data" set:html={plannerDataJson} />
     <script>
-      import { sessionsOverlap, type SessionSlot } from "../lib/scheduling";
+      import { type KindedSlot, classifyOverlap, groupTutorialTimeOptions } from "../lib/scheduling";
 
-      type SessionRow = SessionSlot & { id: number; kind: "lecture" | "tutorial"; label: string };
+      type SessionRow = { id: number; kind: "lecture" | "tutorial"; label: string; dayOfWeek: number; startMinutes: number; endMinutes: number; location: string };
       type CourseRow = { id: number; code: string; title: string; sessions: SessionRow[] };
 
       const DAY_NAMES = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
       const pad = (n: number) => String(n).padStart(2, "0");
       const fmtTime = (m: number) => `${pad(Math.floor(m / 60))}:${pad(m % 60)}`;
-      const fmtSession = (s: SessionSlot) => `${DAY_NAMES[s.dayOfWeek]} ${fmtTime(s.startMinutes)}–${fmtTime(s.endMinutes)}`;
+      const fmtSession = (s: { dayOfWeek: number; startMinutes: number; endMinutes: number }) =>
+        `${DAY_NAMES[s.dayOfWeek]} ${fmtTime(s.startMinutes)}–${fmtTime(s.endMinutes)}`;
       const esc = (s: string) => s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
 
       const dataEl = document.getElementById("planner-data");
@@ -222,292 +163,304 @@ const plannerDataJson = JSON.stringify({
       const courses: CourseRow[] = data.courses ?? [];
       const courseById = new Map(courses.map((c) => [c.id, c]));
       // courseId -> required. Presence in this map means "is a candidate" —
-      // the single persisted state this whole page reflects and mutates.
+      // the persisted, server-truth state this page's left panel is built
+      // from (this page never mutates it; that only happens on /courses/).
       const candidates = new Map<number, { required: boolean }>((data.candidates ?? []).map((c) => [c.courseId, { required: c.required }]));
-      // courseId -> preview membership + chosen tutorial. Client-only,
-      // never sent to the server, never touches candidates or confirmed
-      // enrolment, and starts empty regardless of how many candidates exist.
-      const preview = new Map<number, { tutorialSessionId: number | null }>();
 
-      const courseListEl = document.getElementById("course-list")!;
-      const candidateListEl = document.getElementById("candidate-list")!;
-      const candidatesEmptyNote = document.getElementById("candidates-empty-note")!;
-      const candidateFeedback = document.getElementById("candidate-feedback")!;
+      // Client-only preview: courseId -> chosen time/room, or "in preview but
+      // nothing chosen yet" (dayOfWeek === null). Never sent to the server,
+      // never touches candidates or confirmed enrolment. Persisted to
+      // sessionStorage so it survives a trip to /courses/ and back, but nowhere
+      // else — closing the tab or opening a new one starts fresh, matching the
+      // "never needs to survive a reload" rule for a *single* visit's browser
+      // session PLAN.md/CLAUDE.md set out, just extended across this app's own
+      // two pages rather than one.
+      type PreviewEntry = { dayOfWeek: number | null; startMinutes: number | null; endMinutes: number | null; sessionId: number | null };
+      const PREVIEW_STORAGE_KEY = "planner-preview-v1";
+
+      function loadPreviewFromStorage(): Map<number, PreviewEntry> {
+        try {
+          const raw = sessionStorage.getItem(PREVIEW_STORAGE_KEY);
+          if (!raw) return new Map();
+          const parsed = JSON.parse(raw) as [number, PreviewEntry][];
+          if (!Array.isArray(parsed)) return new Map();
+          return new Map(parsed);
+        } catch {
+          return new Map();
+        }
+      }
+
+      function savePreviewToStorage() {
+        try {
+          sessionStorage.setItem(PREVIEW_STORAGE_KEY, JSON.stringify([...preview.entries()]));
+        } catch {
+          // sessionStorage can throw (private browsing, quota) — the preview
+          // still works for this page view, it just won't survive a
+          // navigation. Not worth surfacing as an error to the visitor.
+        }
+      }
+
+      const preview = loadPreviewFromStorage();
+
+      // Reconcile the restored preview against the *current* candidate list
+      // and course data before rendering anything: drop any course that's no
+      // longer a candidate (removed on /courses/ since this preview was
+      // saved), and re-validate any chosen time/room still actually exists —
+      // falling back to "time chosen, room pending" or "nothing chosen yet"
+      // rather than pointing at a session id that no longer exists.
+      for (const courseId of [...preview.keys()]) {
+        const course = courseById.get(courseId);
+        if (!candidates.has(courseId) || !course) {
+          preview.delete(courseId);
+          continue;
+        }
+        const entry = preview.get(courseId)!;
+        if (entry.dayOfWeek == null) continue;
+        const options = groupTutorialTimeOptions(course.sessions.filter((s) => s.kind === "tutorial"));
+        const match = options.find((o) => o.dayOfWeek === entry.dayOfWeek && o.startMinutes === entry.startMinutes && o.endMinutes === entry.endMinutes);
+        if (!match) {
+          preview.set(courseId, { dayOfWeek: null, startMinutes: null, endMinutes: null, sessionId: null });
+        } else if (entry.sessionId != null && !match.sections.some((s) => s.id === entry.sessionId)) {
+          preview.set(courseId, {
+            dayOfWeek: match.dayOfWeek,
+            startMinutes: match.startMinutes,
+            endMinutes: match.endMinutes,
+            sessionId: match.sections.length === 1 ? match.sections[0].id : null,
+          });
+        }
+      }
+      savePreviewToStorage();
+
+      const scheduleListEl = document.getElementById("candidate-schedule-list")!;
+      const conflictBannersEl = document.getElementById("conflict-banners")!;
       const previewEmptyNote = document.getElementById("preview-empty-note")!;
-      const previewPanel = document.getElementById("preview-panel")!;
-      const lectureConflictsEl = document.getElementById("lecture-conflicts")!;
-      const previewCoursesEl = document.getElementById("preview-courses")!;
       const weeklyGridEl = document.getElementById("weekly-grid")!;
 
-      function renderCourseList() {
-        courseListEl.innerHTML = courses
-          .map((course) => {
-            const candidate = candidates.get(course.id);
-            const lectures = course.sessions.filter((s) => s.kind === "lecture");
-            const tutorials = course.sessions.filter((s) => s.kind === "tutorial");
-            const sessionsHtml = (list: SessionRow[]) => `<ul>${list.map((s) => `<li>${esc(s.label)}: ${fmtSession(s)}</li>`).join("")}</ul>`;
-            const controlsHtml = candidate
-              ? `<button type="button" class="candidate-toggle" data-action="remove" data-course-id="${course.id}">Remove from candidates</button>
-                 <label class="required-toggle">
-                   <input type="checkbox" class="required-checkbox" data-course-id="${course.id}" ${candidate.required ? "checked" : ""} />
-                   Required for this plan (locks it in for this planning session only — not a verified degree requirement)
-                 </label>
-                 <label class="preview-toggle">
-                   <input type="checkbox" class="preview-include-checkbox" data-course-id="${course.id}" ${preview.has(course.id) ? "checked" : ""} />
-                   Include in current preview
-                 </label>`
-              : `<button type="button" class="candidate-toggle" data-action="add" data-course-id="${course.id}">Add to candidates</button>`;
-            return `<article class="course-card" data-course-id="${course.id}">
-              <h3>${esc(course.code)} — ${esc(course.title)}</h3>
-              <div class="sessions">
-                <p class="sessions-label">Lecture(s), fixed:</p>
-                ${sessionsHtml(lectures)}
-                <p class="sessions-label">Tutorials, choose one if this course is in your preview:</p>
-                ${sessionsHtml(tutorials)}
-              </div>
-              <div class="candidate-controls" data-course-id="${course.id}">${controlsHtml}</div>
-            </article>`;
-          })
-          .join("");
-      }
-
-      function renderCandidateList() {
-        const entries = [...candidates.entries()];
-        candidatesEmptyNote.hidden = entries.length > 0;
-        candidateListEl.innerHTML = entries
-          .map(([courseId, c]) => {
-            const course = courseById.get(courseId)!;
-            const inPreview = preview.has(courseId);
-            return `<li data-course-id="${courseId}">
-              <span>${esc(course.code)}</span>
-              ${c.required ? '<span class="badge">Required</span>' : ""}
-              <span class="preview-status" data-course-id="${courseId}">${inPreview ? "In current preview" : "Not in current preview"}</span>
-            </li>`;
-          })
-          .join("");
-      }
-
-      // Every slot currently "locked" for conflict purposes except anything
-      // belonging to `exceptCourseId`: every included course's fixed
-      // lectures, plus the tutorial already chosen for every OTHER included
-      // course. Mirrors src/lib/scheduling.ts's slot shape so it can reuse
-      // sessionsOverlap/findConflict's exact semantics (imported above, not
-      // reimplemented) — including "adjacent isn't a conflict".
-      function lockedSlots(exceptCourseId: number | null): { label: string; session: SessionRow }[] {
-        const slots: { label: string; session: SessionRow }[] = [];
-        for (const [courseId] of preview) {
+      // Every currently-scheduled slot across the whole preview: every
+      // included course's fixed lecture(s), plus a tutorial slot for any
+      // course whose time is chosen — even if its room is still pending,
+      // since conflict-checking only cares about day/time, not which room.
+      function allPreviewSlots(): { courseId: number; label: string; session: KindedSlot; pending: boolean }[] {
+        const slots: { courseId: number; label: string; session: KindedSlot; pending: boolean }[] = [];
+        for (const [courseId, entry] of preview) {
           const course = courseById.get(courseId)!;
           for (const lecture of course.sessions.filter((s) => s.kind === "lecture")) {
-            slots.push({ label: `${course.code} ${lecture.label}`, session: lecture });
+            slots.push({
+              courseId,
+              label: `${course.code} ${lecture.label}`,
+              session: { dayOfWeek: lecture.dayOfWeek, startMinutes: lecture.startMinutes, endMinutes: lecture.endMinutes, kind: "lecture" },
+              pending: false,
+            });
           }
-          if (courseId === exceptCourseId) continue;
-          const chosenId = preview.get(courseId)?.tutorialSessionId;
-          if (chosenId != null) {
-            const tutorial = course.sessions.find((s) => s.id === chosenId);
-            if (tutorial) slots.push({ label: `${course.code} ${tutorial.label}`, session: tutorial });
+          if (entry.dayOfWeek != null && entry.startMinutes != null && entry.endMinutes != null) {
+            const chosen = entry.sessionId != null ? course.sessions.find((s) => s.id === entry.sessionId) : undefined;
+            slots.push({
+              courseId,
+              label: chosen ? `${course.code} ${chosen.label}` : `${course.code} tutorial (room pending)`,
+              session: { dayOfWeek: entry.dayOfWeek, startMinutes: entry.startMinutes, endMinutes: entry.endMinutes, kind: "tutorial" },
+              pending: entry.sessionId == null,
+            });
           }
         }
         return slots;
       }
 
-      function renderLectureConflicts() {
-        const lectureSlots: { label: string; session: SessionRow }[] = [];
-        for (const [courseId] of preview) {
-          const course = courseById.get(courseId)!;
-          for (const lecture of course.sessions.filter((s) => s.kind === "lecture")) {
-            lectureSlots.push({ label: `${course.code} ${lecture.label}`, session: lecture });
-          }
-        }
-        const pairs: [string, string][] = [];
-        for (let i = 0; i < lectureSlots.length; i++) {
-          for (let j = i + 1; j < lectureSlots.length; j++) {
-            if (sessionsOverlap(lectureSlots[i].session, lectureSlots[j].session)) {
-              pairs.push([lectureSlots[i].label, lectureSlots[j].label]);
-            }
-          }
-        }
-        lectureConflictsEl.innerHTML = pairs
-          .map(
-            ([a, b]) =>
-              `<p class="conflict-note">Fixed lecture clash in your current preview: "${esc(a)}" overlaps with "${esc(b)}". Lecture times aren't a choice, so the only way to clear this is to remove one of these two courses from your current preview.</p>`,
-          )
-          .join("");
+      // Same slots as above but excluding one course entirely — what a
+      // not-yet-chosen tutorial option for that course would be compared
+      // against, so a course never "conflicts with itself".
+      function lockedSlotsExcept(exceptCourseId: number): { label: string; session: KindedSlot }[] {
+        return allPreviewSlots()
+          .filter((s) => s.courseId !== exceptCourseId)
+          .map(({ label, session }) => ({ label, session }));
       }
 
-      function renderPreviewCourses() {
-        previewCoursesEl.innerHTML = [...preview.keys()]
-          .map((courseId) => {
+      function renderScheduleList() {
+        const entries = [...candidates.entries()];
+        scheduleListEl.innerHTML = entries
+          .map(([courseId, c]) => {
             const course = courseById.get(courseId)!;
-            const lectures = course.sessions.filter((s) => s.kind === "lecture");
+            const inPreview = preview.has(courseId);
             const tutorials = course.sessions.filter((s) => s.kind === "tutorial");
-            const chosenId = preview.get(courseId)?.tutorialSessionId ?? null;
-            const locked = lockedSlots(courseId);
+            const options = groupTutorialTimeOptions(tutorials);
+            const entry = preview.get(courseId);
 
-            let anyOk = false;
-            const optionsHtml = tutorials
-              .map((t) => {
-                const clashes = locked.filter((slot) => sessionsOverlap(t, slot.session)).map((slot) => slot.label);
-                if (clashes.length === 0) anyOk = true;
-                const note =
-                  clashes.length === 0
-                    ? '<span class="ok-note">No conflict with your current preview</span>'
-                    : `<span class="conflict-note">Clashes with ${clashes.map((c) => `"${esc(c)}"`).join(", ")} (relative to your current preview — not necessarily true of every combination)</span>`;
-                return `<label class="tutorial-option">
-                  <input type="radio" class="tutorial-radio" name="tutorial-${courseId}" data-course-id="${courseId}" data-session-id="${t.id}" ${chosenId === t.id ? "checked" : ""} />
-                  ${esc(t.label)}: ${fmtSession(t)} ${note}
-                </label>`;
-              })
-              .join("");
+            let optionsHtml = "";
+            if (inPreview) {
+              if (options.length === 0) {
+                optionsHtml = "<p>This course has no tutorials to choose from.</p>";
+              } else {
+                const locked = lockedSlotsExcept(courseId);
+                optionsHtml = options
+                  .map((option, index) => {
+                    const key = `${option.dayOfWeek}:${option.startMinutes}:${option.endMinutes}`;
+                    const checked = entry?.dayOfWeek === option.dayOfWeek && entry.startMinutes === option.startMinutes && entry.endMinutes === option.endMinutes;
+                    const optionSlot: KindedSlot = { dayOfWeek: option.dayOfWeek, startMinutes: option.startMinutes, endMinutes: option.endMinutes, kind: "tutorial" };
+                    const tutorialClashes: string[] = [];
+                    const lectureNotes: string[] = [];
+                    for (const slot of locked) {
+                      const cls = classifyOverlap(optionSlot, slot.session);
+                      if (cls === "tutorial-clash") tutorialClashes.push(slot.label);
+                      else if (cls === "lecture-note") lectureNotes.push(slot.label);
+                    }
+                    const notesHtml = [
+                      tutorialClashes.length > 0
+                        ? `<span class="conflict-note">Clashes with ${tutorialClashes.map((c) => `"${esc(c)}"`).join(", ")} in your current preview</span>`
+                        : "",
+                      lectureNotes.length > 0
+                        ? `<span class="lecture-hint">Overlaps a lecture in your current preview (fine — available via recording): ${lectureNotes.map((c) => `"${esc(c)}"`).join(", ")}</span>`
+                        : "",
+                      tutorialClashes.length === 0 && lectureNotes.length === 0 ? '<span class="ok-note">No conflict with your current preview</span>' : "",
+                    ].join(" ");
 
-            const courseLevelNote =
-              tutorials.length > 0 && !anyOk
-                ? `<p class="conflict-note">None of ${esc(course.code)}'s tutorials fit alongside what's currently in your preview. This is about this specific combination, not that ${esc(course.code)} is unavailable — try removing or changing another course in the preview instead.</p>`
-                : "";
-            const incompleteNote =
-              chosenId == null && tutorials.length > 0
-                ? `<p class="incomplete-note">Tutorial not chosen yet for ${esc(course.code)} — it isn't fully scheduled, and conflict-checking involving it isn't complete until you pick one.</p>`
-                : "";
+                    let roomHtml = "";
+                    if (checked && option.sections.length > 1) {
+                      const chosenSessionId = entry?.sessionId ?? null;
+                      roomHtml = `<fieldset class="room-picker">
+                        <legend>${chosenSessionId == null ? '<span class="incomplete-note">Time scheduled — choose a room to finish scheduling this tutorial</span>' : "Room"}</legend>
+                        ${option.sections
+                          .map(
+                            (s) =>
+                              `<label class="room-option"><input type="radio" class="room-radio" name="room-${courseId}-${index}" data-course-id="${courseId}" data-session-id="${s.id}" data-time-key="${key}" ${chosenSessionId === s.id ? "checked" : ""} /> ${esc(s.label)} — ${esc(s.location)}</label>`,
+                          )
+                          .join("")}
+                      </fieldset>`;
+                    } else if (checked && option.sections.length === 1) {
+                      roomHtml = `<p class="ok-note">Room: ${esc(option.sections[0].location)}</p>`;
+                    }
 
-            return `<div class="preview-course" data-course-id="${courseId}">
-              <h4>${esc(course.code)} — ${esc(course.title)}</h4>
-              <p class="sessions-label">Fixed lecture(s):</p>
-              <ul>${lectures.map((l) => `<li>${esc(l.label)}: ${fmtSession(l)}</li>`).join("")}</ul>
-              ${
-                tutorials.length > 0
-                  ? `<fieldset><legend>Choose a tutorial</legend>${courseLevelNote}${incompleteNote}${optionsHtml}</fieldset>`
-                  : "<p>This course has no tutorials to choose from.</p>"
+                    return `<label class="tutorial-option">
+                        <input type="radio" class="tutorial-radio" name="tutorial-${courseId}" data-course-id="${courseId}" data-time-key="${key}" data-day="${option.dayOfWeek}" data-start="${option.startMinutes}" data-end="${option.endMinutes}" ${checked ? "checked" : ""} />
+                        ${fmtSession(option)}${option.sections.length > 1 ? " (multiple rooms)" : ""} ${notesHtml}
+                      </label>${roomHtml}`;
+                  })
+                  .join("");
               }
-            </div>`;
+            }
+
+            return `<article class="schedule-card" data-course-id="${courseId}">
+              <h3>${esc(course.code)} ${c.required ? '<span class="badge">Required</span>' : ""}</h3>
+              <label class="preview-toggle">
+                <input type="checkbox" class="preview-include-checkbox" data-course-id="${courseId}" ${inPreview ? "checked" : ""} />
+                Include in current preview
+              </label>
+              ${inPreview ? `<fieldset class="tutorial-options"><legend>Tutorial time</legend>${optionsHtml}</fieldset>` : ""}
+            </article>`;
           })
           .join("");
       }
 
-      function renderWeeklyGrid() {
-        type Block = { dayOfWeek: number; startMinutes: number; endMinutes: number; text: string; kind: string };
-        const blocks: Block[] = [];
-        for (const [courseId, entry] of preview) {
-          const course = courseById.get(courseId)!;
-          for (const lecture of course.sessions.filter((s) => s.kind === "lecture")) {
-            blocks.push({ ...lecture, text: `${course.code} ${lecture.label} (${fmtTime(lecture.startMinutes)}–${fmtTime(lecture.endMinutes)})`, kind: "lecture" });
+      function renderConflictBanners() {
+        const slots = allPreviewSlots();
+        const tutorialClashPairs: [string, string][] = [];
+        const lectureNotePairs: [string, string][] = [];
+        for (let i = 0; i < slots.length; i++) {
+          for (let j = i + 1; j < slots.length; j++) {
+            const cls = classifyOverlap(slots[i].session, slots[j].session);
+            if (cls === "tutorial-clash") tutorialClashPairs.push([slots[i].label, slots[j].label]);
+            else if (cls === "lecture-note") lectureNotePairs.push([slots[i].label, slots[j].label]);
           }
-          if (entry.tutorialSessionId != null) {
-            const tutorial = course.sessions.find((s) => s.id === entry.tutorialSessionId);
-            if (tutorial) {
-              blocks.push({ ...tutorial, text: `${course.code} ${tutorial.label} (${fmtTime(tutorial.startMinutes)}–${fmtTime(tutorial.endMinutes)})`, kind: "tutorial" });
+        }
+        const parts: string[] = [];
+        for (const [a, b] of tutorialClashPairs) {
+          parts.push(`<p class="conflict-note">Tutorial clash in your current preview: "${esc(a)}" overlaps with "${esc(b)}". Change one of these two tutorial times to clear it.</p>`);
+        }
+        for (const [a, b] of lectureNotePairs) {
+          parts.push(`<p class="lecture-hint">Lecture overlap in your current preview: "${esc(a)}" overlaps with "${esc(b)}" — this never blocks your plan, since a lecture can always be caught up on as a recording.</p>`);
+        }
+        conflictBannersEl.innerHTML = parts.join("");
+      }
+
+      function renderWeeklyGrid() {
+        const slots = allPreviewSlots();
+        if (slots.length === 0) {
+          previewEmptyNote.hidden = false;
+          weeklyGridEl.hidden = true;
+          return;
+        }
+        previewEmptyNote.hidden = true;
+        weeklyGridEl.hidden = false;
+
+        const blockingIndices = new Set<number>();
+        const lectureHintIndices = new Set<number>();
+        for (let i = 0; i < slots.length; i++) {
+          for (let j = i + 1; j < slots.length; j++) {
+            const cls = classifyOverlap(slots[i].session, slots[j].session);
+            if (cls === "tutorial-clash") {
+              blockingIndices.add(i);
+              blockingIndices.add(j);
+            } else if (cls === "lecture-note") {
+              lectureHintIndices.add(i);
+              lectureHintIndices.add(j);
             }
           }
         }
+
         weeklyGridEl.innerHTML = DAY_NAMES.map((name, day) => {
-          const dayBlocks = blocks.filter((b) => b.dayOfWeek === day).sort((a, b) => a.startMinutes - b.startMinutes);
-          const items = dayBlocks
-            .map((b) => {
-              const conflicted = dayBlocks.some((other) => other !== b && sessionsOverlap(b, other));
-              return `<p class="session-block ${b.kind}${conflicted ? " conflict" : ""}">${esc(b.text)}</p>`;
+          const dayIndices = slots
+            .map((s, i) => ({ s, i }))
+            .filter(({ s }) => s.session.dayOfWeek === day)
+            .sort((a, b) => a.s.session.startMinutes - b.s.session.startMinutes);
+          const items = dayIndices
+            .map(({ s, i }) => {
+              const classes = [
+                "session-block",
+                s.session.kind,
+                s.pending ? "pending" : "",
+                blockingIndices.has(i) ? "conflict" : "",
+                lectureHintIndices.has(i) ? "lecture-hint-block" : "",
+              ]
+                .filter(Boolean)
+                .join(" ");
+              const text = `${s.label} (${fmtTime(s.session.startMinutes)}–${fmtTime(s.session.endMinutes)})`;
+              return `<p class="${classes}">${esc(text)}</p>`;
             })
             .join("");
           return `<div class="day-column"><h4>${name}</h4>${items || '<p class="empty-day">No sessions</p>'}</div>`;
         }).join("");
       }
 
-      function renderPreview() {
-        if (preview.size === 0) {
-          previewEmptyNote.hidden = false;
-          previewPanel.hidden = true;
-          return;
-        }
-        previewEmptyNote.hidden = true;
-        previewPanel.hidden = false;
-        renderLectureConflicts();
-        renderPreviewCourses();
+      function renderAll() {
+        renderScheduleList();
+        renderConflictBanners();
         renderWeeklyGrid();
+        savePreviewToStorage();
       }
 
-      async function addCandidate(courseId: number) {
-        const res = await fetch("/api/candidates", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ courseId }),
-        });
-        if (!res.ok) {
-          candidateFeedback.textContent = `Could not add this course as a candidate (${res.status}).`;
-          return;
-        }
-        candidates.set(courseId, { required: false });
-        candidateFeedback.textContent = "";
-        renderCourseList();
-        renderCandidateList();
-      }
-
-      async function removeCandidate(courseId: number) {
-        const course = courseById.get(courseId)!;
-        const res = await fetch(`/api/candidates?courseId=${courseId}`, { method: "DELETE", headers: { origin: location.origin } });
-        if (!res.ok) {
-          candidateFeedback.textContent = `Could not remove this course from your candidates (${res.status}).`;
-          return;
-        }
-        const wasInPreview = preview.delete(courseId);
-        candidates.delete(courseId);
-        candidateFeedback.textContent = wasInPreview
-          ? `Removed ${course.code} from your candidates and from your current preview. Your confirmed enrolment, if any, was not changed.`
-          : `Removed ${course.code} from your candidates. Your confirmed enrolment, if any, was not changed.`;
-        renderCourseList();
-        renderCandidateList();
-        renderPreview();
-      }
-
-      async function setRequired(courseId: number, required: boolean) {
-        const res = await fetch("/api/candidates", {
-          method: "PATCH",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ courseId, required }),
-        });
-        if (!res.ok) {
-          candidateFeedback.textContent = `Could not update the required flag (${res.status}).`;
-          renderCourseList();
-          return;
-        }
-        candidates.set(courseId, { required });
-        renderCourseList();
-        renderCandidateList();
-      }
-
-      courseListEl.addEventListener("click", (event) => {
-        const button = (event.target as HTMLElement).closest<HTMLButtonElement>(".candidate-toggle");
-        if (!button) return;
-        const courseId = Number(button.dataset.courseId);
-        if (button.dataset.action === "add") addCandidate(courseId);
-        else removeCandidate(courseId);
-      });
-
-      courseListEl.addEventListener("change", (event) => {
+      scheduleListEl.addEventListener("change", (event) => {
         const target = event.target as HTMLInputElement;
         const courseId = Number(target.dataset.courseId);
         if (!courseId) return;
-        if (target.classList.contains("required-checkbox")) {
-          setRequired(courseId, target.checked);
-        } else if (target.classList.contains("preview-include-checkbox")) {
-          if (target.checked) preview.set(courseId, { tutorialSessionId: null });
+        if (target.classList.contains("preview-include-checkbox")) {
+          if (target.checked) preview.set(courseId, { dayOfWeek: null, startMinutes: null, endMinutes: null, sessionId: null });
           else preview.delete(courseId);
-          renderCandidateList();
-          renderPreview();
+          renderAll();
+        } else if (target.classList.contains("tutorial-radio")) {
+          const dayOfWeek = Number(target.dataset.day);
+          const startMinutes = Number(target.dataset.start);
+          const endMinutes = Number(target.dataset.end);
+          const course = courseById.get(courseId)!;
+          const options = groupTutorialTimeOptions(course.sessions.filter((s) => s.kind === "tutorial"));
+          const option = options.find((o) => o.dayOfWeek === dayOfWeek && o.startMinutes === startMinutes && o.endMinutes === endMinutes)!;
+          preview.set(courseId, {
+            dayOfWeek,
+            startMinutes,
+            endMinutes,
+            sessionId: option.sections.length === 1 ? option.sections[0].id : null,
+          });
+          renderAll();
+        } else if (target.classList.contains("room-radio")) {
+          const sessionId = Number(target.dataset.sessionId);
+          const entry = preview.get(courseId);
+          if (entry) preview.set(courseId, { ...entry, sessionId });
+          renderAll();
         }
       });
 
-      previewCoursesEl.addEventListener("change", (event) => {
-        const target = event.target as HTMLInputElement;
-        if (!target.classList.contains("tutorial-radio")) return;
-        const courseId = Number(target.dataset.courseId);
-        const sessionId = Number(target.dataset.sessionId);
-        preview.set(courseId, { tutorialSessionId: sessionId });
-        renderPreview();
-      });
-
-      // Re-render once from the same embedded data the server used, so the
-      // JS-driven view starts identical to what was already server-rendered
-      // (no drift between the two templates) before any interaction happens.
-      renderCourseList();
-      renderCandidateList();
-      renderPreview();
+      // Re-render once from the same embedded data the server used (after
+      // reconciling the restored preview above), so the JS-driven view
+      // starts consistent with what was already server-rendered before any
+      // interaction happens.
+      renderAll();
     </script>
   </body>
 </html>

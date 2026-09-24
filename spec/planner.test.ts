@@ -4,8 +4,6 @@ const baseUrl = inject("baseUrl");
 
 type CourseRow = { id: number; code: string; title: string };
 
-// JSON bodies skip Astro's origin check; bodyless DELETE needs an origin
-// header instead — same pattern as spec/candidates.test.ts.
 const json = (path: string, method: string, body?: unknown) =>
   fetch(new URL(path, baseUrl), {
     method,
@@ -15,23 +13,15 @@ const json = (path: string, method: string, body?: unknown) =>
 const del = (path: string) => fetch(new URL(path, baseUrl), { method: "DELETE", headers: { origin: baseUrl } });
 const getPlannerHtml = () => fetch(new URL("/planner/", baseUrl)).then((r) => r.text());
 
-// Pulls out the one <article class="course-card" data-course-id="ID"> block
-// so assertions about one course's controls can't accidentally match another
-// course's card.
-function extractCourseCard(html: string, courseId: number): string {
-  const marker = `<article class="course-card" data-course-id="${courseId}">`;
+// Pulls out the one <article class="schedule-card" data-course-id="ID">
+// block so assertions about one course's controls can't accidentally match
+// another course's card.
+function extractScheduleCard(html: string, courseId: number): string {
+  const marker = `<article class="schedule-card" data-course-id="${courseId}">`;
   const start = html.indexOf(marker);
-  if (start === -1) throw new Error(`course card ${courseId} not found in page`);
+  if (start === -1) throw new Error(`schedule card ${courseId} not found in page`);
   const end = html.indexOf("</article>", start);
   return html.slice(start, end);
-}
-
-function requiredCheckboxTag(cardHtml: string): string {
-  const idx = cardHtml.indexOf('class="required-checkbox"');
-  if (idx === -1) throw new Error("required-checkbox not present in this card");
-  const start = cardHtml.lastIndexOf("<input", idx);
-  const end = cardHtml.indexOf(">", idx);
-  return cardHtml.slice(start, end + 1);
 }
 
 function previewCheckboxTag(cardHtml: string): string {
@@ -42,72 +32,66 @@ function previewCheckboxTag(cardHtml: string): string {
   return cardHtml.slice(start, end + 1);
 }
 
-// Uses COMP3120 exclusively for this file's own candidate add/patch/remove
-// lifecycle, distinct from PHYS1201/ENGN2222 (spec/candidates.test.ts) and
-// COMP2100 (that file's confirmed-enrolment-safety addition), so this file's
-// writes to candidate_courses never race a row another spec file is also
-// mutating.
+// Uses COMP4444 exclusively for this file's own candidate add/patch/remove
+// checks, distinct from COMP3120 (spec/courses.test.ts), PHYS1201/ENGN2222
+// (spec/candidates.test.ts) and COMP2100 (spec/enrollment.test.ts's
+// confirmed-enrolment-safety addition), so this file's writes to
+// candidate_courses never race a row another spec file is also mutating.
 describe("planner page", () => {
   let course: CourseRow;
 
   beforeAll(async () => {
     const list = (await fetch(new URL("/api/courses", baseUrl)).then((r) => r.json())) as CourseRow[];
-    course = list.find((c) => c.code === "COMP3120")!;
+    course = list.find((c) => c.code === "COMP4444")!;
   });
 
-  it("discloses it's a prototype, not an official ANU service, and that course data is fictional demo data", async () => {
+  it("discloses it's a prototype, not an official ANU service, that course data is fictional demo data, and that lectures never block a plan", async () => {
     const html = await getPlannerHtml();
     expect(html).toMatch(/not an official ANU service/i);
     expect(html).toMatch(/demo data/i);
     expect(html).toMatch(/same single demo student/i);
+    expect(html).toMatch(/recording/i);
   });
 
-  it("shows a course's lecture and tutorial times even when it isn't a candidate yet", async () => {
+  it("never shows candidate-management or course-browsing controls — those moved to /courses/", async () => {
     const html = await getPlannerHtml();
-    const card = extractCourseCard(html, course.id);
-    expect(card).toContain("Lecture");
-    expect(card).toContain("Tutorial A");
-    expect(card).toContain("Add to candidates");
-    // Not a candidate yet, so no required/preview controls should exist for it.
-    expect(card).not.toContain("required-checkbox");
-    expect(card).not.toContain("preview-include-checkbox");
+    expect(html).toContain('href="/courses/"');
+    expect(html).not.toContain("candidate-toggle");
+    expect(html).not.toContain("course-search");
+    expect(html).not.toContain('class="course-card"');
   });
 
-  it("persists a newly-added candidate: the page reflects it after a reload, not required and not pre-loaded into the preview", async () => {
+  it("renders the weekly grid hidden and the preview-empty note visible before any client script runs", async () => {
+    const html = await getPlannerHtml();
+    const gridIndex = html.indexOf('id="weekly-grid"');
+    expect(gridIndex).toBeGreaterThan(-1);
+    expect(html.slice(gridIndex, gridIndex + 80)).toContain("hidden");
+    expect(html).toContain('id="preview-empty-note"');
+  });
+
+  it("shows a newly-added candidate as an unchecked preview entry, with no tutorial options until it's included", async () => {
     expect((await json("/api/candidates", "POST", { courseId: course.id })).status).toBe(201);
 
     const html = await getPlannerHtml();
-    const card = extractCourseCard(html, course.id);
-    expect(card).toContain("Remove from candidates");
-    expect(requiredCheckboxTag(card)).not.toContain("checked");
-    // The preview must never be auto-populated from the candidate list.
+    const card = extractScheduleCard(html, course.id);
+    expect(card).toContain(course.code);
     expect(previewCheckboxTag(card)).not.toContain("checked");
-    expect(html).toContain('id="candidate-list"');
-    expect(extractCourseCard(html, course.id)).toBeTruthy();
+    expect(card).not.toContain("tutorial-options");
   });
 
-  it("persists the required flag once toggled on", async () => {
+  it("shows the required badge once the candidate is marked required", async () => {
     expect((await json("/api/candidates", "PATCH", { courseId: course.id, required: true })).status).toBe(200);
 
     const html = await getPlannerHtml();
-    const card = extractCourseCard(html, course.id);
-    expect(requiredCheckboxTag(card)).toContain("checked");
+    const card = extractScheduleCard(html, course.id);
     expect(card).toContain("Required");
-    expect(card).toContain("this planning session only");
   });
 
-  // The "confirmed enrolment is untouched" property itself is verified in
-  // spec/enrollment.test.ts (see the comment there): a before/after snapshot
-  // of /api/enrollment compared here would race that file's legitimate
-  // concurrent writes to the same shared resource, since it's the suite's
-  // sole caller of POST/DELETE /api/enrollment.
-  it("removing a candidate reverts the page's controls for it", async () => {
+  it("drops a removed candidate's schedule card", async () => {
     expect((await del(`/api/candidates?courseId=${course.id}`)).status).toBe(204);
 
     const html = await getPlannerHtml();
-    const card = extractCourseCard(html, course.id);
-    expect(card).toContain("Add to candidates");
-    expect(card).not.toContain("required-checkbox");
+    expect(html).not.toContain(`<article class="schedule-card" data-course-id="${course.id}">`);
   });
 
   // Checks the confirmed-enrolment section against itself only (not a second,
@@ -124,14 +108,5 @@ describe("planner page", () => {
     const hasList = html.includes('id="confirmed-list"');
     const hasEmptyMessage = html.includes("don't have a confirmed enrolment yet");
     expect(hasList || hasEmptyMessage).toBe(true);
-  });
-
-  it("keeps the preview section empty on first load regardless of how many candidates or confirmed courses exist", async () => {
-    const html = await getPlannerHtml();
-    expect(html).toContain('id="preview-empty-note"');
-    const previewPanelIndex = html.indexOf('id="preview-panel"');
-    expect(previewPanelIndex).toBeGreaterThan(-1);
-    // hidden is a bare boolean attribute Astro only emits when true.
-    expect(html.slice(previewPanelIndex, previewPanelIndex + 60)).toContain("hidden");
   });
 });
