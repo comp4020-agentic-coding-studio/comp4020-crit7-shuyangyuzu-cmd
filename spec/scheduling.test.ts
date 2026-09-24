@@ -1,5 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { type KindedSlot, classifyOverlap, findConflict, isBlockingOverlap, sessionsOverlap } from "../src/lib/scheduling";
+import {
+  type KindedSlot,
+  classifyOverlap,
+  findConflict,
+  groupTutorialTimeOptions,
+  isBlockingOverlap,
+  isPendingSection,
+  sessionsOverlap,
+} from "../src/lib/scheduling";
 
 // This is the exact primitive the courses/planner pages' conflict-hint
 // features import client-side, and the same one confirmEnrollment uses
@@ -85,5 +93,48 @@ describe("scheduling", () => {
       { label: "B Tutorial", session: { dayOfWeek: 0, startMinutes: 40, endMinutes: 100, kind: "tutorial" } },
     ];
     expect(findConflict(slots)).toBeNull();
+  });
+
+  // Same-timeslot, multi-section grouping (PLAN.md, "Time options and
+  // sections"): a course can offer identical tutorial times in more than one
+  // room, and combination/feasibility logic must treat that as one time
+  // option, not two competing choices.
+  describe("groupTutorialTimeOptions / isPendingSection", () => {
+    it("gives a single-section time option that is not pending", () => {
+      const tutorials = [{ dayOfWeek: 0, startMinutes: 60, endMinutes: 120, label: "Tutorial A" }];
+      const options = groupTutorialTimeOptions(tutorials);
+      expect(options).toHaveLength(1);
+      expect(options[0].sections).toEqual(tutorials);
+      expect(isPendingSection(options[0])).toBe(false);
+    });
+
+    it("groups two sections sharing the exact same day/start/end into one pending time option", () => {
+      const roomA = { dayOfWeek: 0, startMinutes: 820, endMinutes: 870, label: "Tutorial A" };
+      const roomB = { dayOfWeek: 0, startMinutes: 820, endMinutes: 870, label: "Tutorial A (Room 2)" };
+      const options = groupTutorialTimeOptions([roomA, roomB]);
+      expect(options).toHaveLength(1);
+      expect(options[0]).toMatchObject({ dayOfWeek: 0, startMinutes: 820, endMinutes: 870 });
+      expect(options[0].sections).toEqual([roomA, roomB]);
+      expect(isPendingSection(options[0])).toBe(true);
+    });
+
+    it("keeps sessions with a different day, start, or end as separate time options", () => {
+      const a = { dayOfWeek: 0, startMinutes: 60, endMinutes: 120, label: "Tutorial A" };
+      const differentDay = { dayOfWeek: 1, startMinutes: 60, endMinutes: 120, label: "Tutorial B" };
+      const differentStart = { dayOfWeek: 0, startMinutes: 90, endMinutes: 120, label: "Tutorial C" };
+      const differentEnd = { dayOfWeek: 0, startMinutes: 60, endMinutes: 150, label: "Tutorial D" };
+      const options = groupTutorialTimeOptions([a, differentDay, differentStart, differentEnd]);
+      expect(options).toHaveLength(4);
+      expect(options.every((o) => !isPendingSection(o))).toBe(true);
+    });
+
+    it("preserves first-seen order of groups and of sections within a group", () => {
+      const first = { dayOfWeek: 2, startMinutes: 0, endMinutes: 60, label: "First" };
+      const second = { dayOfWeek: 3, startMinutes: 0, endMinutes: 60, label: "Second" };
+      const firstAgain = { dayOfWeek: 2, startMinutes: 0, endMinutes: 60, label: "First again" };
+      const options = groupTutorialTimeOptions([first, second, firstAgain]);
+      expect(options.map((o) => o.dayOfWeek)).toEqual([2, 3]);
+      expect(options[0].sections).toEqual([first, firstAgain]);
+    });
   });
 });

@@ -48,6 +48,10 @@ export const sessions = sqliteTable(
     dayOfWeek: int("day_of_week").notNull(),
     startMinutes: int("start_minutes").notNull(),
     endMinutes: int("end_minutes").notNull(),
+    // Free text (e.g. a room name); display/selection information only,
+    // never part of conflict detection. Defaulted so the migration that adds
+    // this column doesn't break any session row that predates it.
+    location: text().notNull().default("TBA"),
   },
   (t) => [
     check("sessions_kind_check", sql`${t.kind} in ('lecture', 'tutorial')`),

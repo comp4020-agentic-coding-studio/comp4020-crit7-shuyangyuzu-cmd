@@ -1,0 +1,1 @@
+ALTER TABLE `sessions` ADD `location` text DEFAULT 'TBA' NOT NULL;

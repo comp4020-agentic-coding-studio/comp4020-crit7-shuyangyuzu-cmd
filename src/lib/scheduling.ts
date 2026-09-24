@@ -56,3 +56,47 @@ export function findConflict<T extends KindedSlot>(slots: { label: string; sessi
   }
   return null;
 }
+
+// A course can offer the same tutorial time in more than one room/section
+// (PLAN.md, "Time options and sections"). For combination purposes those
+// rows are one choice, not several: grouping them here is what lets the
+// generator and the manual picker both treat "same day/start/end" as a
+// single time option, with the concrete room/section a separate, later
+// decision that never affects feasibility.
+export type TimeOption<T extends { dayOfWeek: number; startMinutes: number; endMinutes: number }> = {
+  dayOfWeek: number;
+  startMinutes: number;
+  endMinutes: number;
+  sections: T[];
+};
+
+// True once a time option's section has to be picked explicitly before a
+// plan built from it can be confirmed — i.e. it groups more than one
+// section/room sharing the same time. A single-section time option
+// auto-resolves (see PLAN.md): there's nothing to choose.
+export function isPendingSection<T extends { dayOfWeek: number; startMinutes: number; endMinutes: number }>(
+  option: TimeOption<T>,
+): boolean {
+  return option.sections.length > 1;
+}
+
+// Groups a course's tutorial sessions into time options by
+// (dayOfWeek, startMinutes, endMinutes). Order of the input sections within
+// each group is preserved, and groups appear in first-seen order.
+export function groupTutorialTimeOptions<T extends { dayOfWeek: number; startMinutes: number; endMinutes: number }>(
+  tutorials: T[],
+): TimeOption<T>[] {
+  const options: TimeOption<T>[] = [];
+  const byKey = new Map<string, TimeOption<T>>();
+  for (const tutorial of tutorials) {
+    const key = `${tutorial.dayOfWeek}:${tutorial.startMinutes}:${tutorial.endMinutes}`;
+    let option = byKey.get(key);
+    if (!option) {
+      option = { dayOfWeek: tutorial.dayOfWeek, startMinutes: tutorial.startMinutes, endMinutes: tutorial.endMinutes, sections: [] };
+      byKey.set(key, option);
+      options.push(option);
+    }
+    option.sections.push(tutorial);
+  }
+  return options;
+}

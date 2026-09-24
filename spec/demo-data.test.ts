@@ -1,9 +1,17 @@
 import { describe, expect, inject, it } from "vitest";
-import { findConflict } from "../src/lib/scheduling";
+import { findConflict, groupTutorialTimeOptions, isPendingSection } from "../src/lib/scheduling";
 
 const baseUrl = inject("baseUrl");
 
-type SessionRow = { id: number; kind: "lecture" | "tutorial"; label: string; dayOfWeek: number; startMinutes: number; endMinutes: number };
+type SessionRow = {
+  id: number;
+  kind: "lecture" | "tutorial";
+  label: string;
+  dayOfWeek: number;
+  startMinutes: number;
+  endMinutes: number;
+  location: string;
+};
 type CourseRow = { id: number; code: string; sessions: SessionRow[] };
 
 // A "combination" is one tutorial choice per course plus every lecture for
@@ -137,5 +145,27 @@ describe("demo data", () => {
     const subset = courses.filter((c) => ["COMP1010", "COMP3120", "MATH1013", "COMP4444"].includes(c.code));
     expect(subset).toHaveLength(4);
     expect(feasibleCombinationExists(subset)).toBe(true);
+  });
+
+  // Same course, same timeslot, different section (PLAN.md, "Time options and
+  // sections"): STAT1008 offers its one tutorial time in two rooms, and every
+  // session carries a location. groupTutorialTimeOptions must collapse those
+  // two rows into a single pending time option, not two separate choices.
+  it("groups STAT1008's two same-time tutorial sections into one pending time option, each with its own location", async () => {
+    const courses = (await fetch(new URL("/api/courses", baseUrl)).then((r) => r.json())) as CourseRow[];
+    const stat1008 = courses.find((c) => c.code === "STAT1008")!;
+    const tutorials = stat1008.sessions.filter((s) => s.kind === "tutorial");
+    expect(tutorials.length).toBeGreaterThanOrEqual(2);
+    for (const session of stat1008.sessions) {
+      expect(typeof session.location).toBe("string");
+      expect(session.location.length).toBeGreaterThan(0);
+    }
+
+    const options = groupTutorialTimeOptions(tutorials);
+    expect(options).toHaveLength(1);
+    expect(isPendingSection(options[0])).toBe(true);
+    expect(options[0].sections).toHaveLength(2);
+    const locations = new Set(options[0].sections.map((s) => s.location));
+    expect(locations.size).toBe(2);
   });
 });
