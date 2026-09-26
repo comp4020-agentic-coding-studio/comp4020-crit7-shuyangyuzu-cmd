@@ -574,8 +574,8 @@ place while scrolling, the accordion cards read cleanly at the narrower
 width, and the checkbox/radio fix actually looks right rather than just
 computing the numbers I expected.
 
-Commit for this round: layout/CSS revision above, plus this PROCESS.md
-update — hashes to be filled in once committed.
+Commit for this round:
+- [`c6889f7`](https://github.com/comp4020-agentic-coding-studio/comp4020-crit7-shuyangyuzu-cmd/commit/c6889f7) — remove nested scroll, compact candidate cards, fix input sizing, widen timetable
 
 Deliberately out of scope this round, per my instruction: candidate data,
 tutorial/room selection logic, conflict-detection rules, and confirmed-
@@ -806,11 +806,126 @@ dev server myself and open its detail view at both sizes before I'd call
 this fix's UI actually checked, not just type-checked and structurally
 sound.
 
-Commit for this round: grid-reuse fix (`WeeklyGridSkeleton.astro`,
-`planner.astro` refactor, new `spec/planner.test.ts` checks) plus this
-PROCESS.md update — hash to be filled in once committed.
+Commit for this round:
+- [`d8219f7`](https://github.com/comp4020-agentic-coding-studio/comp4020-crit7-shuyangyuzu-cmd/commit/d8219f7) — grid-reuse fix (`WeeklyGridSkeleton.astro`, `planner.astro` refactor, new `spec/planner.test.ts` checks)
 
 Deliberately out of scope this round, per my instruction: this is a display
 fix only — nothing about candidate data, the manual preview's own state,
 confirmed enrolment, or the generator/API from phase 4 changed; phase 5's
 confirm/withdraw UI starts only after this fix is committed on its own.
+
+### Phase 5 — confirm, view, adjust, and withdraw the confirmed enrolment
+
+With the plan-detail grid fixed, I moved to the last piece PLAN.md scoped for
+this build: turning a preview or a generated plan into the actual confirmed
+enrolment, and giving myself a way to see, edit, and undo that decision —
+all from `/planner/` itself, never a trip back to `/courses/` first. I gave
+the agent the requirements for this phase as one instruction up front: an
+explicit "review and confirm" step (never a silent auto-save the moment a
+preview looks complete) that discloses this only ever writes to the
+prototype's own SQLite database and never touches any real ANU system; a
+diff of what confirming will actually change (added/removed/changed
+courses) shown before the write happens, not after; client-side blocking
+that mirrors the server's own validation (empty preview, a course with no
+time chosen yet, a multi-section time left pending, more than 4 courses, a
+tutorial-vs-tutorial clash) so a doomed submission is never allowed to reach
+the server only to bounce; a confirmed-enrolment list visible on the page at
+all times, separate from the preview and separate from the candidate list;
+an explicit "edit in preview" action that loads the confirmed plan into the
+current preview only when I ask it to, never automatically; and a withdraw
+action that removes exactly one confirmed course, with its own explicit
+confirmation, and never touches candidates or the preview. I was also
+explicit, again, that "confirmed" is capped at 4 courses precisely because
+it's the one state modelling actual enrolment — the candidate list and any
+preview stay uncapped, per `CLAUDE.md`.
+
+**Commit granularity.** I asked for this phase as two independent commits —
+confirm, then withdraw/adjust — each buildable and tested on its own, not one
+combined pass. The two features share DOM elements (the confirmed-list
+`<li>` template), a render function (`renderConfirmedList()`), and CSS
+classes (`.confirm-dialog` styles every dialog on the page), so a clean
+line-level split of one finished diff wasn't available after the fact. The
+agent handled this by building both together, then deliberately stripping
+the working tree back down to a "confirm-only" state — removing the
+withdraw button, the load-into-preview button and dialog, and the DOM
+refs/listeners that only exist for them — re-running the full check suite
+against that reduced state, and committing it first; then restoring the
+full, both-features version from its own backup and re-running the full
+suite again before the second commit. Both intermediate and final states
+were genuinely green before being committed — the split was done by
+reduction and restoration, not by committing something broken and fixing it
+in the next commit.
+
+**Confirm (5.1).** The planner page gained a "Review and confirm enrolment"
+section: a disclosure paragraph stating plainly that confirming writes only
+to this app's own demo database; a "Review changes" button that opens a
+dialog showing the diff between the current confirmed enrolment and what
+the current preview would replace it with, grouped as added / removed /
+changed-tutorial, each row naming the specific course and time; and a
+"Confirm enrolment" action inside that same dialog, disabled whenever the
+preview itself isn't submittable yet (a course still missing a time, a
+still-pending multi-section room, more than 4 courses, or a tutorial clash)
+with the specific blocking reason shown, not just a disabled button. On the
+backend, `confirmEnrollment` in `src/lib/db.ts` gained the same
+more-than-4-courses check as a hard rejection inside the same transaction as
+the pre-existing duplicate/ownership/clash checks, so a rejected replace
+still leaves the previous confirmed plan exactly as it was — genuinely
+exercised in `spec/enrollment.test.ts` by submitting 5 courses and then
+re-reading the confirmed list to check nothing changed, not just asserting
+the 400 in isolation.
+
+**Display, load-into-preview, and withdraw (5.2/5.3).** The confirmed
+enrolment now renders as its own list on the page at all times, independent
+of whatever the preview or candidate list currently hold. An "Edit in
+preview" action opens a dialog showing exactly what loading the confirmed
+plan will do to the current preview before it happens, and handles the case
+where a confirmed course is no longer a candidate at all: rather than
+silently dropping it or silently re-adding it as a candidate behind my back,
+it's named separately in the same dialog as "confirmed, but can't be loaded
+here," and is left confirmed and untouched. Swapping a confirmed course is
+this same path, not a separate mechanism: load into preview, change the
+selection, then reuse the existing confirm-diff flow from 5.1. "Withdraw" on
+a single confirmed course opens its own confirmation dialog naming that
+course, and calls `DELETE /api/enrollment?courseId=...` — already a
+narrowly-scoped, single-course removal in `withdrawEnrollment`
+(`src/lib/db.ts`), untouched this round — which never touches any other
+confirmed course, the candidate list, or the preview.
+
+Verification the agent ran: for the intermediate ("confirm-only") state,
+`pnpm typecheck` (0 errors, the same pre-existing `is:inline` hints as every
+prior round) and `pnpm test` (185/185 passing); after restoring the full
+(both-features) state, the same two checks again, `pnpm typecheck` clean and
+`pnpm test` at 186/186 passing across the suite's 14 spec files. The new
+assertions in `spec/enrollment.test.ts` (the >4-course rejection and its
+rollback check) and `spec/planner.test.ts` (the confirm section's disclosure
+and diff markup, the confirmed list rendering with a reachable confirm
+control, and the load-into-preview/withdraw dialogs starting hidden
+server-side) all passed as part of that same run, not as a separate,
+cherry-picked pass.
+
+What I still have not had verified, and am not claiming: there is still no
+browser-automation tool available in this environment, and no dev server
+was even started this round, so nobody — agent or me — has looked at this
+new section rendered in a browser at all, at either 1920×1080 or 390×844.
+Everything above is verified at the API level (`spec/enrollment.test.ts`)
+and by structural markup checks against the server-rendered page
+(`spec/planner.test.ts`), plus the agent tracing the actual code paths by
+hand (that the diff dialog reads from the same preview state the confirm
+button submits, that the withdraw call only ever includes one `courseId`) —
+not by anyone actually clicking through the dialogs. I still need to open
+the dev server myself, search for a course, confirm a plan, reload the page,
+and withdraw a course by hand, at both sizes, before I'd call this phase's
+UI actually checked rather than just type-checked and structurally sound —
+the same standing gap as every UI round before this one in this build.
+
+Commits for this phase:
+- [`7b6bb49`](https://github.com/comp4020-agentic-coding-studio/comp4020-crit7-shuyangyuzu-cmd/commit/7b6bb49) — confirm current preview into confirmed enrolment, with disclosure, diff, and the 4-course cap
+- [`a2b8a6e`](https://github.com/comp4020-agentic-coding-studio/comp4020-crit7-shuyangyuzu-cmd/commit/a2b8a6e) — display confirmed enrolment, load-into-preview (including course swap), and withdraw
+
+Deliberately out of scope this phase, per my instruction: no degree/program
+requirement checking, no multi-semester planning, and nothing pushed to
+`origin` or deployed. This closes the phase order `PLAN.md` set out; what's
+left before the crit is the two standing gaps named above and throughout
+this document — an actual look at rendered pixels at both viewports, which
+only I can do, and my own review and adoption of this file, which remains a
+draft until I say otherwise.
