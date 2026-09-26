@@ -297,8 +297,8 @@ const plannerDataJson = JSON.stringify({
         <h2 id="confirmed-heading">Your confirmed enrolment</h2>
         <p>
           What's actually saved for this demo student, kept separate from the preview above — it
-          only ever changes when you confirm (above), which only ever writes to this prototype's
-          own demo database, never a real ANU system.
+          only ever changes when you confirm (above) or withdraw a course (below), both of which
+          only ever write to this prototype's own demo database, never a real ANU system.
         </p>
         <p id="confirmed-empty-note" hidden={confirmed.length > 0}>
           You don't have a confirmed enrolment yet.
@@ -309,10 +309,58 @@ const plannerDataJson = JSON.stringify({
               <li data-course-id={e.courseId}>
                 <span class="course-code">{e.course.code}</span> — tutorial {e.tutorialSession.label}:{" "}
                 {fmtSession(e.tutorialSession)} — {e.tutorialSession.location}
+                <button
+                  type="button"
+                  class="withdraw-course-btn"
+                  data-course-id={e.courseId}
+                  data-course-code={e.course.code}
+                >
+                  Withdraw
+                </button>
               </li>
             ))
           }
         </ul>
+        <div class="confirmed-actions">
+          <button type="button" id="load-confirmed-into-preview-btn" disabled={confirmed.length === 0}>
+            Edit in preview
+          </button>
+          <p class="trigger-note">
+            Loads these courses and tutorial times into your preview above so you can change
+            something and confirm again — this is also how you swap one confirmed course for
+            another. Never happens silently: you'll always see exactly what's about to be loaded
+            first.
+          </p>
+        </div>
+
+        <div
+          id="load-preview-dialog"
+          class="confirm-dialog"
+          role="dialog"
+          aria-label="Load confirmed enrolment into preview"
+          hidden
+        >
+          <h3>Load your confirmed enrolment into the preview?</h3>
+          <div id="load-preview-dialog-body"></div>
+          <div class="confirm-dialog-actions">
+            <button type="button" id="load-preview-dialog-confirm">Yes, load into preview</button>
+            <button type="button" id="load-preview-dialog-cancel">Cancel</button>
+          </div>
+        </div>
+
+        <div id="withdraw-dialog" class="confirm-dialog" role="dialog" aria-label="Withdraw course" hidden>
+          <h3>Withdraw <span id="withdraw-dialog-course"></span>?</h3>
+          <p>
+            This removes it from your confirmed enrolment only. It stays in your candidates list
+            (and in your preview, if it's there) unless you remove it separately on the{" "}
+            <a href="/courses/">courses page</a>.
+          </p>
+          <p id="withdraw-dialog-error" class="conflict-note" role="alert" hidden></p>
+          <div class="confirm-dialog-actions">
+            <button type="button" id="withdraw-dialog-confirm">Yes, withdraw</button>
+            <button type="button" id="withdraw-dialog-cancel">Cancel</button>
+          </div>
+        </div>
       </section>
     </main>
     <script type="application/json" id="planner-data" set:html={plannerDataJson} />
@@ -479,6 +527,16 @@ const plannerDataJson = JSON.stringify({
 
       const confirmedEmptyNoteEl = document.getElementById("confirmed-empty-note")!;
       const confirmedListEl = document.getElementById("confirmed-list")!;
+      const loadConfirmedBtn = document.getElementById("load-confirmed-into-preview-btn") as HTMLButtonElement;
+      const loadPreviewDialogEl = document.getElementById("load-preview-dialog")!;
+      const loadPreviewDialogBodyEl = document.getElementById("load-preview-dialog-body")!;
+      const loadPreviewDialogConfirmBtn = document.getElementById("load-preview-dialog-confirm") as HTMLButtonElement;
+      const loadPreviewDialogCancelBtn = document.getElementById("load-preview-dialog-cancel") as HTMLButtonElement;
+      const withdrawDialogEl = document.getElementById("withdraw-dialog")!;
+      const withdrawDialogCourseEl = document.getElementById("withdraw-dialog-course")!;
+      const withdrawDialogErrorEl = document.getElementById("withdraw-dialog-error")!;
+      const withdrawDialogConfirmBtn = document.getElementById("withdraw-dialog-confirm") as HTMLButtonElement;
+      const withdrawDialogCancelBtn = document.getElementById("withdraw-dialog-cancel") as HTMLButtonElement;
 
       type PreviewSlot = { courseId: number; label: string; session: KindedSlot; location: string; pending: boolean };
 
@@ -1005,6 +1063,7 @@ const plannerDataJson = JSON.stringify({
       function renderConfirmedList() {
         confirmedEmptyNoteEl.hidden = confirmedState.length > 0;
         confirmedListEl.hidden = confirmedState.length === 0;
+        loadConfirmedBtn.disabled = confirmedState.length === 0;
         const sorted = [...confirmedState].sort((a, b) =>
           (courseById.get(a.courseId)?.code ?? "").localeCompare(courseById.get(b.courseId)?.code ?? ""),
         );
@@ -1018,6 +1077,7 @@ const plannerDataJson = JSON.stringify({
               : '<span class="conflict-note">that tutorial section no longer exists</span>';
             return `<li data-course-id="${c.courseId}">
               <span class="course-code">${esc(code)}</span> — ${timeHtml}
+              <button type="button" class="withdraw-course-btn" data-course-id="${c.courseId}" data-course-code="${esc(code)}">Withdraw</button>
             </li>`;
           })
           .join("");
@@ -1074,6 +1134,110 @@ const plannerDataJson = JSON.stringify({
         } finally {
           confirmInFlight = false;
           confirmDialogConfirmBtn.disabled = false;
+        }
+      });
+
+      // Which confirmed courses can actually be loaded back into the preview
+      // right now (still a candidate) vs which can't (removed as a candidate
+      // since being confirmed) — shown explicitly in the load-preview dialog
+      // rather than silently dropped, per CLAUDE.md.
+      function loadableConfirmedSplit(): { loadable: EnrollmentChoice[]; skipped: EnrollmentChoice[] } {
+        const loadable: EnrollmentChoice[] = [];
+        const skipped: EnrollmentChoice[] = [];
+        for (const choice of confirmedState) {
+          (candidates.has(choice.courseId) ? loadable : skipped).push(choice);
+        }
+        return { loadable, skipped };
+      }
+
+      loadConfirmedBtn.addEventListener("click", () => {
+        const { loadable, skipped } = loadableConfirmedSplit();
+        const parts: string[] = [];
+        if (loadable.length > 0) {
+          parts.push(
+            `<p>These will be loaded into your preview, replacing whatever's there now:</p><ul>${loadable
+              .map((c) => `<li>${esc(describeChoice(c.courseId, c.tutorialSessionId))}</li>`)
+              .join("")}</ul>`,
+          );
+        }
+        if (skipped.length > 0) {
+          parts.push(
+            `<p class="incomplete-note">These are confirmed but no longer in your candidates, so they can't be loaded into the preview — they stay confirmed as-is. Add them back as a candidate on the <a href="/courses/">courses page</a> first if you want to edit them here too:</p><ul>${skipped
+              .map((c) => `<li>${esc(describeChoice(c.courseId, c.tutorialSessionId))}</li>`)
+              .join("")}</ul>`,
+          );
+        }
+        loadPreviewDialogBodyEl.innerHTML = parts.join("") || "<p>Nothing to load.</p>";
+        loadPreviewDialogEl.hidden = false;
+      });
+
+      loadPreviewDialogCancelBtn.addEventListener("click", () => {
+        loadPreviewDialogEl.hidden = true;
+      });
+
+      loadPreviewDialogConfirmBtn.addEventListener("click", () => {
+        const { loadable } = loadableConfirmedSplit();
+        preview.clear();
+        for (const choice of loadable) {
+          const course = courseById.get(choice.courseId);
+          const session = course?.sessions.find((s) => s.id === choice.tutorialSessionId);
+          if (!session) continue;
+          preview.set(choice.courseId, {
+            dayOfWeek: session.dayOfWeek,
+            startMinutes: session.startMinutes,
+            endMinutes: session.endMinutes,
+            sessionId: session.id,
+          });
+        }
+        expandedCourseId = null;
+        loadPreviewDialogEl.hidden = true;
+        renderAll();
+      });
+
+      let withdrawCourseId: number | null = null;
+      let withdrawInFlight = false;
+
+      confirmedListEl.addEventListener("click", (event) => {
+        const button = (event.target as HTMLElement).closest<HTMLButtonElement>(".withdraw-course-btn");
+        if (!button) return;
+        withdrawCourseId = Number(button.dataset.courseId);
+        withdrawDialogCourseEl.textContent = button.dataset.courseCode ?? String(withdrawCourseId);
+        withdrawDialogErrorEl.hidden = true;
+        withdrawDialogErrorEl.textContent = "";
+        withdrawDialogEl.hidden = false;
+      });
+
+      withdrawDialogCancelBtn.addEventListener("click", () => {
+        withdrawDialogEl.hidden = true;
+        withdrawCourseId = null;
+      });
+
+      withdrawDialogConfirmBtn.addEventListener("click", async () => {
+        if (withdrawInFlight || withdrawCourseId == null) return;
+        const courseId = withdrawCourseId;
+        withdrawInFlight = true;
+        withdrawDialogConfirmBtn.disabled = true;
+        try {
+          const res = await fetch(`/api/enrollment?courseId=${courseId}`, { method: "DELETE" });
+          if (!res.ok) {
+            const body = (await res.json().catch(() => null)) as { error?: string } | null;
+            withdrawDialogErrorEl.textContent = body?.error ?? `Withdraw failed (${res.status}).`;
+            withdrawDialogErrorEl.hidden = false;
+            return;
+          }
+          // Withdrawing only ever trims confirmedState by this one course —
+          // never touches `candidates` or `preview` (CLAUDE.md: withdrawing
+          // must never auto-remove a course from candidates).
+          confirmedState = confirmedState.filter((c) => c.courseId !== courseId);
+          withdrawDialogEl.hidden = true;
+          withdrawCourseId = null;
+          renderConfirmedList();
+        } catch {
+          withdrawDialogErrorEl.textContent = "Withdraw failed — check your connection and try again.";
+          withdrawDialogErrorEl.hidden = false;
+        } finally {
+          withdrawInFlight = false;
+          withdrawDialogConfirmBtn.disabled = false;
         }
       });
 
