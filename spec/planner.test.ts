@@ -142,6 +142,66 @@ describe("planner page", () => {
       expect(html.slice(modalIndex, modalIndex + 140)).toContain("hidden");
     });
 
+    // The plan-detail view was rewritten to reuse the same 08:00-22:00
+    // time-axis weekly grid as the manual preview (via WeeklyGridSkeleton),
+    // instead of a day-grouped list only. These checks confirm that reuse is
+    // real markup, not just a client-side behaviour claim: same grid
+    // structure duplicated under its own ids, plus the never-touches-preview
+    // disclosure and the pending-section note, with the list view kept only
+    // as a secondary, collapsed disclosure.
+    it("gives the plan-detail modal its own 08:00-22:00 weekly grid, structurally identical to the manual preview's own grid", async () => {
+      const html = await getPlannerHtml();
+
+      const previewGridIndex = html.indexOf('id="weekly-grid"');
+      const planGridIndex = html.indexOf('id="plan-detail-grid"');
+      expect(previewGridIndex).toBeGreaterThan(-1);
+      expect(planGridIndex).toBeGreaterThan(-1);
+      // Distinct ids, i.e. a genuinely separate DOM subtree per grid — not one
+      // element reused/relocated between the manual preview and a plan.
+      expect(previewGridIndex).not.toBe(planGridIndex);
+
+      const planGridBlock = html.slice(planGridIndex, planGridIndex + 3200);
+      expect(planGridBlock).toContain('id="plan-detail-day-tabs"');
+      expect(planGridBlock).toContain("weekly-grid-header");
+      expect(planGridBlock).toContain("weekly-grid-body");
+      expect(planGridBlock).toContain("time-axis");
+      expect(planGridBlock).toContain("day-column");
+      // Same fixed time axis as the manual preview grid: 08:00 through 22:00.
+      expect(planGridBlock).toContain("08:00");
+      expect(planGridBlock).toContain("22:00");
+    });
+
+    it("discloses that the plan-detail view is read-only and never changes the current preview, and carries a pending-section note", async () => {
+      const html = await getPlannerHtml();
+      const modalIndex = html.indexOf('id="plan-detail-modal"');
+      const modalEnd = html.indexOf("</div>\n      </section>", modalIndex);
+      const modalBlock = html.slice(modalIndex, modalEnd === -1 ? modalIndex + 2000 : modalEnd);
+
+      expect(modalBlock).toMatch(/never changes your current preview/i);
+      expect(modalBlock).toMatch(/only ["“]apply to current preview["”]/i);
+
+      const pendingNoteIndex = modalBlock.indexOf('id="plan-detail-pending-note"');
+      expect(pendingNoteIndex).toBeGreaterThan(-1);
+      expect(modalBlock.slice(pendingNoteIndex, pendingNoteIndex + 60)).toContain("hidden");
+      expect(modalBlock).toMatch(/to be chosen/i);
+    });
+
+    it("keeps the day-by-day list as a secondary, collapsed view alongside the grid rather than the only display", async () => {
+      const html = await getPlannerHtml();
+      const modalIndex = html.indexOf('id="plan-detail-modal"');
+      const modalBlock = html.slice(modalIndex, modalIndex + 6000);
+
+      // The grid must appear before the list-details disclosure, i.e. the
+      // grid is the primary view and the list is a secondary fallback below
+      // it, not the other way round.
+      const gridIndex = modalBlock.indexOf('id="plan-detail-grid"');
+      const listDetailsIndex = modalBlock.indexOf('id="plan-detail-list-details"');
+      expect(gridIndex).toBeGreaterThan(-1);
+      expect(listDetailsIndex).toBeGreaterThan(gridIndex);
+      expect(modalBlock).toContain("<details");
+      expect(modalBlock).toMatch(/day-by-day list/i);
+    });
+
     // Restores whatever this file found in place before it started, in a
     // finally block, so a run in any file order leaves plan_preferences
     // exactly as it found it — this file doesn't otherwise own that table

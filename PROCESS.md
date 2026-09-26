@@ -722,3 +722,95 @@ UI round in this build.
 Deliberately out of scope this phase, per my instruction: the final
 confirm/withdraw UI is still phase 5 and untouched; nothing was pushed to
 `origin` or deployed.
+
+### Phase 4 correction — reusing the weekly grid for the plan-detail view
+
+After using the auto-scheduler on real data, I decided the "plan detail
+view" call recorded above was wrong. A day-grouped list is not what I asked
+for, and it doesn't let me actually compare a generated plan against the
+manual preview at a glance the way the rest of this app is built to —
+everywhere else, "look at a week" means the same 08:00–22:00 time-axis grid.
+I asked the agent to fix this specifically, as its own round before phase 5,
+not folded into phase 5's own commits.
+
+The requirement: a generated plan's schedule view must reuse the *same*
+weekly grid component the manual preview already uses — same fixed
+08:00–22:00 axis, same overlap-column packing (`packOverlappingSlots`), same
+position math (`computeGridPosition`), same lecture-vs-tutorial overlap
+styling (`classifyOverlap`) — not a second, differently-behaving grid. A
+pending (multi-section, unresolved) tutorial time must still show its
+scheduled day/time slot on the grid, with its location marked as not yet
+chosen, never auto-picking a section. Viewing a plan must not be able to
+touch the manual preview's own state in any way, and closing the plan view
+must leave the manual preview exactly as it was — not "restored," but never
+touched in the first place. The old day-grouped list could stay, but only as
+a secondary, clearly-labelled display, not the only view.
+
+The agent's approach, and why: rather than temporarily pointing the existing
+grid-rendering code at a generated plan's data and then swapping it back
+afterward — which it judged, and I agreed, was a real risk in this codebase
+specifically, since the manual preview's own render path
+(`savePreviewToStorage`) persists whatever the module-level preview state
+currently holds to `sessionStorage` — it pulled the grid's markup out into a
+shared component (`src/components/WeeklyGridSkeleton.astro`) instantiated
+twice under two different ids, and pulled the block-rendering logic out into
+a shared function (`renderSlotsIntoGrid(slots, gridRootEl, outOfRangeEl)`)
+that takes an explicit slot list and explicit target elements rather than
+reading or writing any shared module state. The plan-detail view
+(`#plan-detail-grid`, its own day-tabs, its own out-of-range banner, its own
+session-detail panel) is therefore a fully separate DOM subtree from the
+manual preview's own grid (`#weekly-grid`) — there is no shared state for
+viewing a plan to leak into, so "never touches the preview" holds by
+construction, not because of a careful swap-and-restore sequence that has to
+be gotten right every time. I reviewed this reasoning and think it's the
+right call: a swap-based approach would have worked too, but only if nobody
+ever forgot to reset the swap, which is exactly the kind of thing that goes
+unnoticed until someone's real preview data quietly changes.
+
+A generated plan's pending tutorial slot now reads "To be chosen" as its
+location on the grid, and the plan-detail modal shows an explicit note
+("...still need a specific room/section chosen...shown as 'To be
+chosen'...") whenever the plan has any pending course, using the same
+`pendingCount` the generator already reports rather than a fresh recount.
+The day-grouped list survives inside a collapsed `<details>` disclosure
+below the grid, labelled "Show as a day-by-day list instead (useful on a
+small screen)" — kept exactly because I'd allowed it as a secondary display,
+not removed.
+
+Verification: `pnpm typecheck` (0 errors — this round also removed now-dead
+frontmatter locals in `planner.astro` left over once the grid markup moved
+into the shared component, and the now-unused `scheduling.ts` import that
+only fed them), `pnpm build`, and `pnpm test` (`astro build` plus the full
+vitest run). The existing structural checks in `spec/planner.test.ts` for
+`#weekly-grid` and `#plan-detail-modal` rendering `hidden` server-side still
+pass unchanged, since both wrapper elements kept their own opening-tag
+attributes through the refactor. I added new, targeted structural checks to
+the same file for this fix specifically: that `#plan-detail-grid` exists as
+its own element (a different DOM id from `#weekly-grid`, i.e. really a
+separate instance, not the same element relabelled) and carries the same
+grid markup shape (day-tabs, `weekly-grid-header`, `weekly-grid-body`,
+`time-axis`, day columns, the 08:00–22:00 axis labels); that the modal
+discloses it's read-only and never changes the current preview, and that its
+pending-section note exists, starts hidden, and mentions "To be chosen";
+and that the grid appears before the collapsed list-details element in
+markup order, i.e. the grid is the primary view and the list a secondary one
+below it. Final run: 15 spec files, 182 tests, all passing.
+
+What I still have not had verified, and am not claiming: there is still no
+browser-automation tool available in this environment. I have not looked at
+this plan-detail grid rendered in an actual browser at either 1920×1080 or
+390×844, and neither has the agent — the checks above are all structural
+(compiled markup, passing tests), the same standing limitation as every
+other UI round in this build. I still need to generate a plan on the running
+dev server myself and open its detail view at both sizes before I'd call
+this fix's UI actually checked, not just type-checked and structurally
+sound.
+
+Commit for this round: grid-reuse fix (`WeeklyGridSkeleton.astro`,
+`planner.astro` refactor, new `spec/planner.test.ts` checks) plus this
+PROCESS.md update — hash to be filled in once committed.
+
+Deliberately out of scope this round, per my instruction: this is a display
+fix only — nothing about candidate data, the manual preview's own state,
+confirmed enrolment, or the generator/API from phase 4 changed; phase 5's
+confirm/withdraw UI starts only after this fix is committed on its own.

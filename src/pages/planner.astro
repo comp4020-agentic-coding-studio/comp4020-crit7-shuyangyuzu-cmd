@@ -14,7 +14,7 @@
 // candidates — so removing a candidate on /courses/ can never leave a ghost
 // entry in a stale preview.
 import { getPreferences, listCandidates, listConfirmedEnrollments, listCourses } from "../lib/db";
-import { GRID_END_MINUTES, GRID_START_MINUTES, PX_PER_HOUR } from "../lib/scheduling";
+import WeeklyGridSkeleton from "../components/WeeklyGridSkeleton.astro";
 import "../styles.css";
 
 const courses = listCourses();
@@ -24,18 +24,6 @@ const preferences = getPreferences();
 
 const DAY_NAMES = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
 const DAY_ABBR = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
-
-// The grid's fixed vertical axis and its hour labels are the same for every
-// visitor and never depend on candidate/preview data, so they're rendered
-// server-side straight from the shared constants in scheduling.ts — the
-// client script only ever has to fill in the session blocks themselves.
-const gridHours = (GRID_END_MINUTES - GRID_START_MINUTES) / 60; // 14
-const gridHeightPx = gridHours * PX_PER_HOUR; // 896
-const hourLabels = Array.from({ length: gridHours + 1 }, (_, i) => GRID_START_MINUTES / 60 + i); // 8..22
-// getDay() is 0=Sunday..6=Saturday; this app's own convention (scheduling.ts)
-// is 0=Monday..6=Sunday, so today's index needs the same +6 %7 shift used
-// throughout this file's fmtSession/DAY_NAMES indexing.
-const todayIndex = (new Date().getDay() + 6) % 7;
 
 function pad(n: number): string {
   return String(n).padStart(2, "0");
@@ -131,53 +119,7 @@ const plannerDataJson = JSON.stringify({
             Nothing is in your current preview yet. Tick a candidate on the left to add it.
           </p>
           <p id="out-of-range-warning" class="conflict-note" role="status" aria-live="polite" hidden></p>
-          <div id="weekly-grid" class="weekly-grid" hidden>
-            <div class="day-tabs" id="day-tabs" role="tablist" aria-label="Choose a day to view">
-              {
-                DAY_ABBR.map((abbr, day) => (
-                  <button
-                    type="button"
-                    class={`day-tab${day === todayIndex ? " mobile-active" : ""}`}
-                    data-day={day}
-                    role="tab"
-                    aria-selected={day === todayIndex ? "true" : "false"}
-                  >
-                    {abbr}
-                  </button>
-                ))
-              }
-            </div>
-            <div class="weekly-grid-scroll">
-              <div class="weekly-grid-header">
-                <div class="time-axis-spacer" aria-hidden="true"></div>
-                {
-                  DAY_NAMES.map((name, day) => (
-                    <div class={`day-header${day === todayIndex ? " mobile-active" : ""}`} data-day={day}>
-                      {name}
-                    </div>
-                  ))
-                }
-              </div>
-              <div class="weekly-grid-body" style={`--hour-px: ${PX_PER_HOUR}px; --grid-height: ${gridHeightPx}px;`}>
-                <div class="time-axis">
-                  {
-                    hourLabels.map((hour) => (
-                      <div class="hour-label" style={`top: ${(hour - GRID_START_MINUTES / 60) * PX_PER_HOUR}px;`}>
-                        {String(hour % 24).padStart(2, "0")}:00
-                      </div>
-                    ))
-                  }
-                </div>
-                {
-                  DAY_NAMES.map((_, day) => (
-                    <div class={`day-column${day === todayIndex ? " mobile-active" : ""}`} data-day={day}>
-                      <div class="day-column-blocks"></div>
-                    </div>
-                  ))
-                }
-              </div>
-            </div>
-          </div>
+          <WeeklyGridSkeleton gridId="weekly-grid" dayTabsId="day-tabs" ariaLabel="Choose a day to view" hidden={true} />
           <div id="session-detail" class="session-detail" role="dialog" aria-label="Session detail" hidden></div>
         </div>
       </section>
@@ -291,7 +233,25 @@ const plannerDataJson = JSON.stringify({
         <div id="plan-detail-modal" class="plan-detail-modal" role="dialog" aria-label="Plan weekly schedule" hidden>
           <button type="button" id="plan-detail-close" class="session-detail-close" aria-label="Close">×</button>
           <h4>Weekly schedule for this plan</h4>
-          <div id="plan-detail-content"></div>
+          <p class="trigger-note">
+            This is a read-only look at the plan — it never changes your current preview above.
+            Only "Apply to current preview" does that.
+          </p>
+          <p id="plan-detail-pending-note" class="lecture-hint" hidden>
+            One or more tutorial times below still need a specific room/section chosen — shown as
+            "To be chosen" until you apply this plan and pick one.
+          </p>
+          <p id="plan-detail-out-of-range-warning" class="conflict-note" role="status" aria-live="polite" hidden></p>
+          <WeeklyGridSkeleton
+            gridId="plan-detail-grid"
+            dayTabsId="plan-detail-day-tabs"
+            ariaLabel="Choose a day to view for this plan"
+          />
+          <div id="plan-detail-session-detail" class="session-detail" role="dialog" aria-label="Plan session detail" hidden></div>
+          <details id="plan-detail-list-details">
+            <summary>Show as a day-by-day list instead (useful on a small screen)</summary>
+            <div id="plan-detail-content"></div>
+          </details>
         </div>
       </section>
 
@@ -455,6 +415,11 @@ const plannerDataJson = JSON.stringify({
       const planDetailModalEl = document.getElementById("plan-detail-modal")!;
       const planDetailCloseBtn = document.getElementById("plan-detail-close") as HTMLButtonElement;
       const planDetailContentEl = document.getElementById("plan-detail-content")!;
+      const planDetailPendingNoteEl = document.getElementById("plan-detail-pending-note")!;
+      const planDetailOutOfRangeEl = document.getElementById("plan-detail-out-of-range-warning")!;
+      const planDetailGridEl = document.getElementById("plan-detail-grid")!;
+      const planDetailDayTabsEl = document.getElementById("plan-detail-day-tabs")!;
+      const planDetailSessionDetailEl = document.getElementById("plan-detail-session-detail")!;
 
       type PreviewSlot = { courseId: number; label: string; session: KindedSlot; location: string; pending: boolean };
 
@@ -664,42 +629,51 @@ const plannerDataJson = JSON.stringify({
       // just its time-proportional height, never inflated by its label.
       const KIND_ABBR: Record<KindedSlot["kind"], string> = { lecture: "Lec", tutorial: "Tut" };
 
-      // Slots currently rendered in the grid, indexed by the same "detail
+      // Slots currently rendered in each grid, indexed by the same "detail
       // index" each block's data-detail-index points at, so a click can look
       // up the full label/location/status without re-deriving it from text.
+      // Two separate lists (one per grid instance) so opening the plan
+      // detail's grid can never look up an index into the manual preview's
+      // slot list, or vice versa.
       let currentDetailSlots: PreviewSlot[] = [];
+      let currentPlanDetailSlots: PreviewSlot[] = [];
 
-      function closeSessionDetail() {
-        sessionDetailEl.hidden = true;
-        sessionDetailEl.innerHTML = "";
+      function closeDetailPanel(panelEl: HTMLElement) {
+        panelEl.hidden = true;
+        panelEl.innerHTML = "";
       }
 
-      function openSessionDetail(slot: PreviewSlot, statusText: string) {
-        sessionDetailEl.innerHTML = `
+      function openDetailPanel(panelEl: HTMLElement, slot: PreviewSlot, statusText: string) {
+        panelEl.innerHTML = `
           <button type="button" class="session-detail-close" aria-label="Close">×</button>
           <h4>${esc(slot.label)}</h4>
           <p>${esc(KIND_ABBR[slot.session.kind] === "Lec" ? "Lecture" : "Tutorial")} · ${esc(DAY_NAMES[slot.session.dayOfWeek])} ${esc(fmtTime(slot.session.startMinutes))}–${esc(fmtTime(slot.session.endMinutes))}</p>
           <p>Location: ${esc(slot.location)}</p>
           <p>${esc(statusText)}</p>
         `;
-        sessionDetailEl.hidden = false;
+        panelEl.hidden = false;
       }
 
-      function renderWeeklyGrid() {
-        // Any open detail panel refers to a slot index into the *previous*
-        // render's slot list, which a re-render can invalidate (a course
-        // toggled off, a different tutorial chosen) — always close it rather
-        // than risk showing stale or mismatched detail after a change.
-        closeSessionDetail();
-        const slots = allPreviewSlots();
-        if (slots.length === 0) {
-          previewEmptyNote.hidden = false;
-          weeklyGridEl.hidden = true;
-          return;
-        }
-        previewEmptyNote.hidden = true;
-        weeklyGridEl.hidden = false;
+      function closeSessionDetail() {
+        closeDetailPanel(sessionDetailEl);
+      }
 
+      function detailStatusText(slot: PreviewSlot): string {
+        return slot.pending
+          ? "Time scheduled — room/section not yet chosen."
+          : slot.session.kind === "tutorial"
+            ? "Scheduled."
+            : "Lecture — always available via recording, never blocks your plan.";
+      }
+
+      // Shared by both grid instances (the manual preview's own grid and the
+      // generated-plan detail view): fills in each day column's session
+      // blocks from a given slot list using the same overlap classification,
+      // packing and 08:00-22:00 positioning either grid ever uses, so the two
+      // can never draw the same kind of data two different ways. Returns
+      // nothing — callers keep their own "which slots are currently shown,
+      // for click-to-expand" list, since the two grids never share one.
+      function renderSlotsIntoGrid(slots: PreviewSlot[], gridRootEl: HTMLElement, outOfRangeEl: HTMLElement) {
         const blockingIndices = new Set<number>();
         const lectureHintIndices = new Set<number>();
         for (let i = 0; i < slots.length; i++) {
@@ -722,9 +696,8 @@ const plannerDataJson = JSON.stringify({
         // visible window) but also named here so its true, longer time isn't
         // mistaken for what's actually on screen.
         const outOfRangeNotes: string[] = [];
-        currentDetailSlots = slots;
 
-        weeklyGridEl.querySelectorAll<HTMLElement>(".day-column").forEach((columnEl) => {
+        gridRootEl.querySelectorAll<HTMLElement>(".day-column").forEach((columnEl) => {
           const day = Number(columnEl.dataset.day);
           const blocksEl = columnEl.querySelector<HTMLElement>(".day-column-blocks")!;
           const dayEntries = slots
@@ -761,12 +734,30 @@ const plannerDataJson = JSON.stringify({
         });
 
         if (outOfRangeNotes.length > 0) {
-          outOfRangeWarningEl.textContent = outOfRangeNotes.join(" ");
-          outOfRangeWarningEl.hidden = false;
+          outOfRangeEl.textContent = outOfRangeNotes.join(" ");
+          outOfRangeEl.hidden = false;
         } else {
-          outOfRangeWarningEl.hidden = true;
-          outOfRangeWarningEl.textContent = "";
+          outOfRangeEl.hidden = true;
+          outOfRangeEl.textContent = "";
         }
+      }
+
+      function renderWeeklyGrid() {
+        // Any open detail panel refers to a slot index into the *previous*
+        // render's slot list, which a re-render can invalidate (a course
+        // toggled off, a different tutorial chosen) — always close it rather
+        // than risk showing stale or mismatched detail after a change.
+        closeSessionDetail();
+        const slots = allPreviewSlots();
+        if (slots.length === 0) {
+          previewEmptyNote.hidden = false;
+          weeklyGridEl.hidden = true;
+          return;
+        }
+        previewEmptyNote.hidden = true;
+        weeklyGridEl.hidden = false;
+        currentDetailSlots = slots;
+        renderSlotsIntoGrid(slots, weeklyGridEl, outOfRangeWarningEl);
       }
 
       weeklyGridEl.addEventListener("click", (event) => {
@@ -775,31 +766,48 @@ const plannerDataJson = JSON.stringify({
         const index = Number(target.dataset.detailIndex);
         const slot = currentDetailSlots[index];
         if (!slot) return;
-        const statusText = slot.pending
-          ? "Time scheduled — room not yet chosen."
-          : slot.session.kind === "tutorial"
-            ? "Scheduled."
-            : "Lecture — always available via recording, never blocks your plan.";
-        openSessionDetail(slot, statusText);
+        openDetailPanel(sessionDetailEl, slot, detailStatusText(slot));
       });
 
       sessionDetailEl.addEventListener("click", (event) => {
-        if ((event.target as HTMLElement).closest(".session-detail-close")) closeSessionDetail();
+        if ((event.target as HTMLElement).closest(".session-detail-close")) closeDetailPanel(sessionDetailEl);
       });
 
-      dayTabsEl.addEventListener("click", (event) => {
-        const button = (event.target as HTMLElement).closest<HTMLButtonElement>(".day-tab");
-        if (!button) return;
-        const day = Number(button.dataset.day);
-        dayTabsEl.querySelectorAll<HTMLButtonElement>(".day-tab").forEach((tab) => {
-          const isActive = Number(tab.dataset.day) === day;
-          tab.classList.toggle("mobile-active", isActive);
-          tab.setAttribute("aria-selected", String(isActive));
-        });
-        weeklyGridEl.querySelectorAll<HTMLElement>(".day-header, .day-column").forEach((el) => {
-          el.classList.toggle("mobile-active", Number(el.dataset.day) === day);
-        });
+      planDetailGridEl.addEventListener("click", (event) => {
+        const target = (event.target as HTMLElement).closest<HTMLElement>("[data-detail-index]");
+        if (!target) return;
+        const index = Number(target.dataset.detailIndex);
+        const slot = currentPlanDetailSlots[index];
+        if (!slot) return;
+        openDetailPanel(planDetailSessionDetailEl, slot, detailStatusText(slot));
       });
+
+      planDetailSessionDetailEl.addEventListener("click", (event) => {
+        if ((event.target as HTMLElement).closest(".session-detail-close")) closeDetailPanel(planDetailSessionDetailEl);
+      });
+
+      // Wires a day-tabs row (the mobile day-switcher) to the matching grid's
+      // own day-header/day-column elements — shared by the manual preview's
+      // grid and the plan-detail grid, each with its own tabs/grid pair, so
+      // switching the visible day on one can never affect the other.
+      function wireDayTabs(tabsEl: HTMLElement, gridRootEl: HTMLElement) {
+        tabsEl.addEventListener("click", (event) => {
+          const button = (event.target as HTMLElement).closest<HTMLButtonElement>(".day-tab");
+          if (!button) return;
+          const day = Number(button.dataset.day);
+          tabsEl.querySelectorAll<HTMLButtonElement>(".day-tab").forEach((tab) => {
+            const isActive = Number(tab.dataset.day) === day;
+            tab.classList.toggle("mobile-active", isActive);
+            tab.setAttribute("aria-selected", String(isActive));
+          });
+          gridRootEl.querySelectorAll<HTMLElement>(".day-header, .day-column").forEach((el) => {
+            el.classList.toggle("mobile-active", Number(el.dataset.day) === day);
+          });
+        });
+      }
+
+      wireDayTabs(dayTabsEl, weeklyGridEl);
+      wireDayTabs(planDetailDayTabsEl, planDetailGridEl);
 
       function renderAll() {
         renderScheduleList();
@@ -888,13 +896,21 @@ const plannerDataJson = JSON.stringify({
         }
       }
 
-      function planToDetailSlots(plan: GenPlan): { label: string; session: KindedSlot; location: string; pending: boolean }[] {
-        const slots: { label: string; session: KindedSlot; location: string; pending: boolean }[] = [];
+      // Same shape as allPreviewSlots()'s PreviewSlot, built from a generated
+      // plan instead of the live preview — this is what lets the plan detail
+      // view render through the exact same renderSlotsIntoGrid() the manual
+      // preview grid uses, rather than a second, separately-written renderer.
+      // A pending (section not yet chosen) time option's location reads "To
+      // be chosen" here — never defaulted to one of its sections — matching
+      // the same pending-room wording the manual preview's own grid uses.
+      function planToDetailSlots(plan: GenPlan): PreviewSlot[] {
+        const slots: PreviewSlot[] = [];
         for (const choice of plan.courses) {
           const course = courseById.get(choice.courseId);
           if (!course) continue;
           for (const lecture of course.sessions.filter((s) => s.kind === "lecture")) {
             slots.push({
+              courseId: choice.courseId,
               label: `${course.code} ${lecture.label}`,
               session: { dayOfWeek: lecture.dayOfWeek, startMinutes: lecture.startMinutes, endMinutes: lecture.endMinutes, kind: "lecture" },
               location: lecture.location,
@@ -903,23 +919,21 @@ const plannerDataJson = JSON.stringify({
           }
           const section = choice.sectionId != null ? course.sessions.find((s) => s.id === choice.sectionId) : undefined;
           slots.push({
+            courseId: choice.courseId,
             label: section ? `${course.code} ${section.label}` : `${course.code} tutorial (section pending)`,
             session: { dayOfWeek: choice.dayOfWeek, startMinutes: choice.startMinutes, endMinutes: choice.endMinutes, kind: "tutorial" },
-            location: section ? section.location : "Section not yet chosen",
+            location: section ? section.location : "To be chosen",
             pending: choice.pending,
           });
         }
         return slots;
       }
 
-      function closePlanDetail() {
-        planDetailModalEl.hidden = true;
-        planDetailContentEl.innerHTML = "";
-      }
-
-      function renderPlanDetail(plan: GenPlan) {
-        const slots = planToDetailSlots(plan);
-        const byDay = new Map<number, typeof slots>();
+      // Kept as a secondary, auxiliary rendering of the same slot list — a
+      // plain day-grouped list inside a collapsed <details>, useful on a
+      // narrow screen or as a quick scan — never the primary view any more.
+      function renderPlanDetailList(slots: PreviewSlot[]) {
+        const byDay = new Map<number, PreviewSlot[]>();
         for (const slot of slots) {
           const list = byDay.get(slot.session.dayOfWeek) ?? [];
           list.push(slot);
@@ -938,6 +952,29 @@ const plannerDataJson = JSON.stringify({
           return `<div class="plan-detail-day"><h4>${esc(name)}</h4><ul>${items}</ul></div>`;
         }).join("");
         planDetailContentEl.innerHTML = html || "<p>No sessions in this plan.</p>";
+      }
+
+      function closePlanDetail() {
+        planDetailModalEl.hidden = true;
+        closeDetailPanel(planDetailSessionDetailEl);
+        planDetailContentEl.innerHTML = "";
+      }
+
+      // Renders a generated plan's weekly schedule through the exact same
+      // grid machinery the manual preview uses (classifyOverlap,
+      // packOverlappingSlots, computeGridPosition, the lecture-hint/conflict
+      // styling) — but into the plan-detail modal's own, separate grid
+      // element, never the manual preview's `#weekly-grid`. Because this
+      // never reads or writes the `preview` Map or touches `weeklyGridEl`,
+      // viewing a plan can never change the manual preview, and closing the
+      // modal (closePlanDetail) always leaves it exactly as it was.
+      function renderPlanDetail(plan: GenPlan) {
+        const slots = planToDetailSlots(plan);
+        currentPlanDetailSlots = slots;
+        closeDetailPanel(planDetailSessionDetailEl);
+        renderSlotsIntoGrid(slots, planDetailGridEl, planDetailOutOfRangeEl);
+        renderPlanDetailList(slots);
+        planDetailPendingNoteEl.hidden = plan.pendingCount === 0;
         planDetailModalEl.hidden = false;
       }
 
