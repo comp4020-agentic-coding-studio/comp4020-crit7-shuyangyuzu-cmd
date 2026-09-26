@@ -1,11 +1,16 @@
 import { describe, expect, it } from "vitest";
 import {
   type KindedSlot,
+  GRID_END_MINUTES,
+  GRID_START_MINUTES,
+  PX_PER_HOUR,
   classifyOverlap,
+  computeGridPosition,
   findConflict,
   groupTutorialTimeOptions,
   isBlockingOverlap,
   isPendingSection,
+  packOverlappingSlots,
   sessionsOverlap,
 } from "../src/lib/scheduling";
 
@@ -137,4 +142,102 @@ describe("scheduling", () => {
       expect(options[0].sections).toEqual([first, firstAgain]);
     });
   });
+
+  // Time-proportional weekly grid layout (Phase 3 layout revision): the
+  // planner's grid axis is fixed at 08:00-22:00 with PX_PER_HOUR pixels per
+  // hour, shared by every day, so a block's position/height is a direct
+  // function of its actual start/end time rather than course order.
+  describe("computeGridPosition", () => {
+    it("positions a 09:30-start, 90-minute session at the user's worked example (top=96px, height=96px)", () => {
+      // 09:30 is 90 minutes after the 08:00 grid start: 90/60 * 64 = 96px down.
+      // A 90-minute duration is likewise 90/60 * 64 = 96px tall.
+      const pos = computeGridPosition(570, 660);
+      expect(pos).toEqual({ kind: "visible", topPx: 96, heightPx: 96, clippedStart: false, clippedEnd: false });
+    });
+
+    it("positions a session starting exactly at the grid start with zero top offset", () => {
+      const pos = computeGridPosition(GRID_START_MINUTES, GRID_START_MINUTES + 60);
+      expect(pos).toMatchObject({ kind: "visible", topPx: 0, heightPx: PX_PER_HOUR });
+    });
+
+    it("reports a session entirely before the grid window as out-of-range", () => {
+      expect(computeGridPosition(360, 420)).toEqual({ kind: "out-of-range" });
+    });
+
+    it("reports a session entirely after the grid window as out-of-range", () => {
+      expect(computeGridPosition(1350, 1400)).toEqual({ kind: "out-of-range" });
+    });
+
+    it("clips and flags a session that starts before the grid window but ends inside it", () => {
+      const pos = computeGridPosition(GRID_START_MINUTES - 30, GRID_START_MINUTES + 60);
+      expect(pos).toEqual({ kind: "visible", topPx: 0, heightPx: PX_PER_HOUR, clippedStart: true, clippedEnd: false });
+    });
+
+    it("clips and flags a session that starts inside the grid window but ends after it", () => {
+      const pos = computeGridPosition(GRID_END_MINUTES - 60, GRID_END_MINUTES + 30);
+      expect(pos).toEqual({ kind: "visible", topPx: (GRID_END_MINUTES - 60 - GRID_START_MINUTES) * (PX_PER_HOUR / 60), heightPx: PX_PER_HOUR, clippedStart: false, clippedEnd: true });
+    });
+
+    it("treats a session ending exactly at the grid start as out-of-range, not a zero-height sliver", () => {
+      expect(computeGridPosition(GRID_START_MINUTES - 60, GRID_START_MINUTES)).toEqual({ kind: "out-of-range" });
+    });
+  });
+
+  describe("packOverlappingSlots", () => {
+    it("gives two genuinely overlapping same-day sessions separate columns", () => {
+      const a: SessionSlotLike = { dayOfWeek: 0, startMinutes: 60, endMinutes: 120 };
+      const b: SessionSlotLike = { dayOfWeek: 0, startMinutes: 90, endMinutes: 150 };
+      const result = packOverlappingSlots([a, b]);
+      expect(result).toHaveLength(2);
+      expect(result[0].totalColumns).toBe(2);
+      expect(result[1].totalColumns).toBe(2);
+      expect(new Set(result.map((r) => r.column))).toEqual(new Set([0, 1]));
+    });
+
+    it("keeps two exactly back-to-back sessions in the same single-width column (adjacency is not overlap)", () => {
+      const a: SessionSlotLike = { dayOfWeek: 0, startMinutes: 60, endMinutes: 120 };
+      const b: SessionSlotLike = { dayOfWeek: 0, startMinutes: 120, endMinutes: 180 };
+      const result = packOverlappingSlots([a, b]);
+      expect(result.every((r) => r.column === 0 && r.totalColumns === 1)).toBe(true);
+    });
+
+    it("gives three mutually-overlapping sessions three separate columns in one cluster", () => {
+      const a: SessionSlotLike = { dayOfWeek: 0, startMinutes: 60, endMinutes: 180 };
+      const b: SessionSlotLike = { dayOfWeek: 0, startMinutes: 90, endMinutes: 150 };
+      const c: SessionSlotLike = { dayOfWeek: 0, startMinutes: 100, endMinutes: 130 };
+      const result = packOverlappingSlots([a, b, c]);
+      expect(result.every((r) => r.totalColumns === 3)).toBe(true);
+      expect(new Set(result.map((r) => r.column))).toEqual(new Set([0, 1, 2]));
+    });
+
+    it("reuses a freed column once its occupant has ended, within a transitively-overlapping cluster", () => {
+      // A overlaps B, B overlaps C, but A and C don't overlap each other —
+      // still one cluster (transitively linked), and C can reuse A's column.
+      const a: SessionSlotLike = { dayOfWeek: 0, startMinutes: 0, endMinutes: 60 };
+      const b: SessionSlotLike = { dayOfWeek: 0, startMinutes: 30, endMinutes: 90 };
+      const c: SessionSlotLike = { dayOfWeek: 0, startMinutes: 60, endMinutes: 120 };
+      const result = packOverlappingSlots([a, b, c]);
+      const byStart = [...result].sort((x, y) => x.slot.startMinutes - y.slot.startMinutes);
+      expect(byStart[0].column).toBe(0); // A
+      expect(byStart[1].column).toBe(1); // B, overlaps A
+      expect(byStart[2].column).toBe(0); // C starts when A ends, reuses column 0
+      expect(byStart.every((r) => r.totalColumns === 2)).toBe(true);
+    });
+
+    it("puts non-overlapping sessions on different days into independent full-width clusters when pre-filtered per day", () => {
+      // packOverlappingSlots assumes single-day input; cross-day handling is
+      // the caller's job (filter by dayOfWeek before calling), so two same-time
+      // sessions on different days each get their own single-column cluster.
+      const mondaySlots: SessionSlotLike[] = [{ dayOfWeek: 0, startMinutes: 60, endMinutes: 120 }];
+      const tuesdaySlots: SessionSlotLike[] = [{ dayOfWeek: 1, startMinutes: 60, endMinutes: 120 }];
+      expect(packOverlappingSlots(mondaySlots)[0]).toMatchObject({ column: 0, totalColumns: 1 });
+      expect(packOverlappingSlots(tuesdaySlots)[0]).toMatchObject({ column: 0, totalColumns: 1 });
+    });
+
+    it("returns an empty array for no slots", () => {
+      expect(packOverlappingSlots([])).toEqual([]);
+    });
+  });
 });
+
+type SessionSlotLike = { dayOfWeek: number; startMinutes: number; endMinutes: number };

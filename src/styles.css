@@ -212,39 +212,121 @@ main.courses {
   margin-block-end: 0.25rem;
 }
 
+/* Time-proportional weekly grid (Phase 3 layout revision). Every day shares
+   one fixed 08:00-22:00 axis at --hour-px pixels per hour (set inline from
+   src/lib/scheduling.ts's PX_PER_HOUR, so the one number that matters is
+   never duplicated as a literal here) — a block's top/height come from that
+   same axis via computeGridPosition, never from stacking order, and idle
+   time is never compressed out. */
 .weekly-grid {
-  display: grid;
-  grid-template-columns: repeat(7, 1fr);
-  gap: 0.75rem;
   margin-block: 1rem;
 }
 
-.weekly-grid .day-column {
+.day-tabs {
+  display: none; /* desktop shows all seven day columns at once */
+}
+
+.weekly-grid-scroll {
+  max-height: 75vh;
+  overflow-y: auto;
+  overflow-x: hidden;
   border: 1px solid #ccc;
   border-radius: 0.5rem;
-  padding: 0.5rem;
+}
+
+/* Sticky weekday header row: stays visible while the grid body scrolls. */
+.weekly-grid-header {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: flex;
+  background: #fff;
+  border-bottom: 1px solid #ccc;
+}
+
+.time-axis-spacer {
+  flex: 0 0 3.5rem;
+}
+
+.day-header {
+  flex: 1;
   min-width: 0;
-}
-
-.weekly-grid .day-column h4 {
-  margin: 0 0 0.5rem;
-  font-size: 0.95rem;
-}
-
-.session-block {
-  border-radius: 0.4rem;
-  padding: 0.4rem 0.5rem;
-  margin-block-end: 0.4rem;
+  padding: 0.4rem 0.25rem;
   font-size: 0.85rem;
-  overflow-wrap: anywhere;
+  font-weight: 600;
+  text-align: center;
+  border-left: 1px solid #eee;
+}
+
+.weekly-grid-body {
+  display: flex;
+  position: relative;
+}
+
+.time-axis {
+  flex: 0 0 3.5rem;
+  position: relative;
+  height: var(--grid-height);
+}
+
+.hour-label {
+  position: absolute;
+  left: 0;
+  right: 0.3rem;
+  transform: translateY(-0.55em);
+  text-align: right;
+  font-size: 0.75rem;
+  color: #666;
+}
+
+.day-column {
+  flex: 1;
+  min-width: 0;
+  position: relative;
+  height: var(--grid-height);
+  border-left: 1px solid #eee;
+  /* Hour gridlines (first, painted on top, more visible) layered over
+     half-hour gridlines (second, more subtle) — both periods scale off the
+     same --hour-px custom property as the block positions themselves. */
+  background-image:
+    repeating-linear-gradient(to bottom, #ddd 0, #ddd 1px, transparent 1px, transparent var(--hour-px)),
+    repeating-linear-gradient(to bottom, #f0f0f0 0, #f0f0f0 1px, transparent 1px, transparent calc(var(--hour-px) / 2));
+}
+
+.day-column-blocks {
+  position: absolute;
+  inset: 0;
+}
+
+/* Session blocks are absolutely positioned by inline style (top/height from
+   computeGridPosition, left/width from packOverlappingSlots' column/
+   totalColumns) — this is what makes position a direct function of time
+   instead of course order, and lets overlapping sessions sit side by side
+   without covering each other. Rendered as <button> so a click can open the
+   detail panel without a block ever growing taller to fit its own text. */
+.session-block {
+  position: absolute;
+  box-sizing: border-box;
+  border-radius: 0.3rem;
+  padding: 0.15rem 0.35rem;
+  font: inherit;
+  font-size: 0.72rem;
+  line-height: 1.2;
+  text-align: left;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  cursor: pointer;
 }
 
 .session-block.lecture {
   background: #e6f0ff;
+  border: 1px solid #b9d4ff;
 }
 
 .session-block.tutorial {
   background: #e9f9ee;
+  border: 1px solid #bfe8cd;
 }
 
 .session-block.conflict {
@@ -267,9 +349,36 @@ main.courses {
   outline-offset: -2px;
 }
 
-.empty-day {
-  color: #888;
-  font-size: 0.85rem;
+/* Shared click-triggered detail panel (one, not one per block) — section,
+   location and status live here so a block's own text never has to say more
+   than course code / kind / time range. */
+.session-detail {
+  position: relative;
+  border: 1px solid #ccc;
+  border-radius: 0.5rem;
+  padding: 0.75rem 1rem;
+  margin-block-start: 0.75rem;
+  background: #fafafa;
+}
+
+.session-detail h4 {
+  margin-block: 0 0.25rem;
+}
+
+.session-detail p {
+  margin-block: 0.25rem;
+}
+
+.session-detail-close {
+  position: absolute;
+  top: 0.5rem;
+  right: 0.5rem;
+  border: none;
+  background: none;
+  font-size: 1.1rem;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0.2rem 0.4rem;
 }
 
 @media (max-width: 640px) {
@@ -287,13 +396,47 @@ main.courses {
     width: 100%;
   }
 
-  .weekly-grid {
-    grid-template-columns: 1fr;
-  }
-
   .candidate-controls,
   .course-filters {
     flex-direction: column;
     align-items: flex-start;
+  }
+
+  /* Requirement: a phone screen gets a single day's timeline plus a
+     day-switcher, rather than seven squeezed-down columns — the day-tabs
+     row appears, and every day-header/day-column except the active one
+     (the .mobile-active class, toggled by the tabs) is hidden. The time
+     axis itself stays visible and shared, same as desktop. */
+  .day-tabs {
+    display: flex;
+    gap: 0.25rem;
+    margin-block-end: 0.5rem;
+    overflow-x: auto;
+  }
+
+  .day-tab {
+    flex: 0 0 auto;
+    padding: 0.35rem 0.6rem;
+    font: inherit;
+    font-size: 0.85rem;
+    border: 1px solid #ccc;
+    border-radius: 1rem;
+    background: #fff;
+  }
+
+  .day-tab.mobile-active {
+    background: #0b5fff;
+    color: #fff;
+    border-color: #0b5fff;
+  }
+
+  .day-header,
+  .day-column {
+    display: none;
+  }
+
+  .day-header.mobile-active,
+  .day-column.mobile-active {
+    display: block;
   }
 }

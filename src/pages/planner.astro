@@ -14,6 +14,7 @@
 // candidates — so removing a candidate on /courses/ can never leave a ghost
 // entry in a stale preview.
 import { listCandidates, listConfirmedEnrollments, listCourses } from "../lib/db";
+import { GRID_END_MINUTES, GRID_START_MINUTES, PX_PER_HOUR } from "../lib/scheduling";
 import "../styles.css";
 
 const courses = listCourses();
@@ -21,6 +22,19 @@ const candidates = listCandidates();
 const confirmed = listConfirmedEnrollments();
 
 const DAY_NAMES = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+const DAY_ABBR = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+
+// The grid's fixed vertical axis and its hour labels are the same for every
+// visitor and never depend on candidate/preview data, so they're rendered
+// server-side straight from the shared constants in scheduling.ts — the
+// client script only ever has to fill in the session blocks themselves.
+const gridHours = (GRID_END_MINUTES - GRID_START_MINUTES) / 60; // 14
+const gridHeightPx = gridHours * PX_PER_HOUR; // 896
+const hourLabels = Array.from({ length: gridHours + 1 }, (_, i) => GRID_START_MINUTES / 60 + i); // 8..22
+// getDay() is 0=Sunday..6=Saturday; this app's own convention (scheduling.ts)
+// is 0=Monday..6=Sunday, so today's index needs the same +6 %7 shift used
+// throughout this file's fmtSession/DAY_NAMES indexing.
+const todayIndex = (new Date().getDay() + 6) % 7;
 
 function pad(n: number): string {
   return String(n).padStart(2, "0");
@@ -113,7 +127,55 @@ const plannerDataJson = JSON.stringify({
           <p id="preview-empty-note">
             Nothing is in your current preview yet. Tick a candidate on the left to add it.
           </p>
-          <div id="weekly-grid" class="weekly-grid" hidden></div>
+          <p id="out-of-range-warning" class="conflict-note" role="status" aria-live="polite" hidden></p>
+          <div id="weekly-grid" class="weekly-grid" hidden>
+            <div class="day-tabs" id="day-tabs" role="tablist" aria-label="Choose a day to view">
+              {
+                DAY_ABBR.map((abbr, day) => (
+                  <button
+                    type="button"
+                    class={`day-tab${day === todayIndex ? " mobile-active" : ""}`}
+                    data-day={day}
+                    role="tab"
+                    aria-selected={day === todayIndex ? "true" : "false"}
+                  >
+                    {abbr}
+                  </button>
+                ))
+              }
+            </div>
+            <div class="weekly-grid-scroll">
+              <div class="weekly-grid-header">
+                <div class="time-axis-spacer" aria-hidden="true"></div>
+                {
+                  DAY_NAMES.map((name, day) => (
+                    <div class={`day-header${day === todayIndex ? " mobile-active" : ""}`} data-day={day}>
+                      {name}
+                    </div>
+                  ))
+                }
+              </div>
+              <div class="weekly-grid-body" style={`--hour-px: ${PX_PER_HOUR}px; --grid-height: ${gridHeightPx}px;`}>
+                <div class="time-axis">
+                  {
+                    hourLabels.map((hour) => (
+                      <div class="hour-label" style={`top: ${(hour - GRID_START_MINUTES / 60) * PX_PER_HOUR}px;`}>
+                        {String(hour % 24).padStart(2, "0")}:00
+                      </div>
+                    ))
+                  }
+                </div>
+                {
+                  DAY_NAMES.map((_, day) => (
+                    <div class={`day-column${day === todayIndex ? " mobile-active" : ""}`} data-day={day}>
+                      <div class="day-column-blocks"></div>
+                    </div>
+                  ))
+                }
+              </div>
+            </div>
+          </div>
+          <div id="session-detail" class="session-detail" role="dialog" aria-label="Session detail" hidden></div>
         </div>
       </section>
 
@@ -142,7 +204,13 @@ const plannerDataJson = JSON.stringify({
     </main>
     <script type="application/json" id="planner-data" set:html={plannerDataJson} />
     <script>
-      import { type KindedSlot, classifyOverlap, groupTutorialTimeOptions } from "../lib/scheduling";
+      import {
+        type KindedSlot,
+        classifyOverlap,
+        computeGridPosition,
+        groupTutorialTimeOptions,
+        packOverlappingSlots,
+      } from "../lib/scheduling";
 
       type SessionRow = { id: number; kind: "lecture" | "tutorial"; label: string; dayOfWeek: number; startMinutes: number; endMinutes: number; location: string };
       type CourseRow = { id: number; code: string; title: string; sessions: SessionRow[] };
@@ -235,13 +303,22 @@ const plannerDataJson = JSON.stringify({
       const conflictBannersEl = document.getElementById("conflict-banners")!;
       const previewEmptyNote = document.getElementById("preview-empty-note")!;
       const weeklyGridEl = document.getElementById("weekly-grid")!;
+      const outOfRangeWarningEl = document.getElementById("out-of-range-warning")!;
+      const sessionDetailEl = document.getElementById("session-detail")!;
+      const dayTabsEl = document.getElementById("day-tabs")!;
+
+      type PreviewSlot = { courseId: number; label: string; session: KindedSlot; location: string; pending: boolean };
 
       // Every currently-scheduled slot across the whole preview: every
       // included course's fixed lecture(s), plus a tutorial slot for any
       // course whose time is chosen — even if its room is still pending,
       // since conflict-checking only cares about day/time, not which room.
-      function allPreviewSlots(): { courseId: number; label: string; session: KindedSlot; pending: boolean }[] {
-        const slots: { courseId: number; label: string; session: KindedSlot; pending: boolean }[] = [];
+      // `location` is carried through purely for the grid's click-to-expand
+      // detail panel (requirement: block text stays compact, room/section
+      // detail is a click away) — it was already part of each session row,
+      // just not previously threaded through this function.
+      function allPreviewSlots(): PreviewSlot[] {
+        const slots: PreviewSlot[] = [];
         for (const [courseId, entry] of preview) {
           const course = courseById.get(courseId)!;
           for (const lecture of course.sessions.filter((s) => s.kind === "lecture")) {
@@ -249,6 +326,7 @@ const plannerDataJson = JSON.stringify({
               courseId,
               label: `${course.code} ${lecture.label}`,
               session: { dayOfWeek: lecture.dayOfWeek, startMinutes: lecture.startMinutes, endMinutes: lecture.endMinutes, kind: "lecture" },
+              location: lecture.location,
               pending: false,
             });
           }
@@ -258,6 +336,7 @@ const plannerDataJson = JSON.stringify({
               courseId,
               label: chosen ? `${course.code} ${chosen.label}` : `${course.code} tutorial (room pending)`,
               session: { dayOfWeek: entry.dayOfWeek, startMinutes: entry.startMinutes, endMinutes: entry.endMinutes, kind: "tutorial" },
+              location: chosen ? chosen.location : "Room not yet chosen",
               pending: entry.sessionId == null,
             });
           }
@@ -370,7 +449,38 @@ const plannerDataJson = JSON.stringify({
         conflictBannersEl.innerHTML = parts.join("");
       }
 
+      // Short, fixed-width kind label so a block's own text never has to grow
+      // to say "lecture"/"tutorial" in full — the block's height is always
+      // just its time-proportional height, never inflated by its label.
+      const KIND_ABBR: Record<KindedSlot["kind"], string> = { lecture: "Lec", tutorial: "Tut" };
+
+      // Slots currently rendered in the grid, indexed by the same "detail
+      // index" each block's data-detail-index points at, so a click can look
+      // up the full label/location/status without re-deriving it from text.
+      let currentDetailSlots: PreviewSlot[] = [];
+
+      function closeSessionDetail() {
+        sessionDetailEl.hidden = true;
+        sessionDetailEl.innerHTML = "";
+      }
+
+      function openSessionDetail(slot: PreviewSlot, statusText: string) {
+        sessionDetailEl.innerHTML = `
+          <button type="button" class="session-detail-close" aria-label="Close">×</button>
+          <h4>${esc(slot.label)}</h4>
+          <p>${esc(KIND_ABBR[slot.session.kind] === "Lec" ? "Lecture" : "Tutorial")} · ${esc(DAY_NAMES[slot.session.dayOfWeek])} ${esc(fmtTime(slot.session.startMinutes))}–${esc(fmtTime(slot.session.endMinutes))}</p>
+          <p>Location: ${esc(slot.location)}</p>
+          <p>${esc(statusText)}</p>
+        `;
+        sessionDetailEl.hidden = false;
+      }
+
       function renderWeeklyGrid() {
+        // Any open detail panel refers to a slot index into the *previous*
+        // render's slot list, which a re-render can invalidate (a course
+        // toggled off, a different tutorial chosen) — always close it rather
+        // than risk showing stale or mismatched detail after a change.
+        closeSessionDetail();
         const slots = allPreviewSlots();
         if (slots.length === 0) {
           previewEmptyNote.hidden = false;
@@ -395,13 +505,34 @@ const plannerDataJson = JSON.stringify({
           }
         }
 
-        weeklyGridEl.innerHTML = DAY_NAMES.map((name, day) => {
-          const dayIndices = slots
+        // CLAUDE.md: a session outside the fixed 08:00-22:00 axis must be
+        // disclosed, never silently hidden. Fully out-of-range sessions can't
+        // be drawn on the grid at all, so they're named in this banner
+        // instead; a partially-clipped one is still drawn (clamped to the
+        // visible window) but also named here so its true, longer time isn't
+        // mistaken for what's actually on screen.
+        const outOfRangeNotes: string[] = [];
+        currentDetailSlots = slots;
+
+        weeklyGridEl.querySelectorAll<HTMLElement>(".day-column").forEach((columnEl) => {
+          const day = Number(columnEl.dataset.day);
+          const blocksEl = columnEl.querySelector<HTMLElement>(".day-column-blocks")!;
+          const dayEntries = slots
             .map((s, i) => ({ s, i }))
-            .filter(({ s }) => s.session.dayOfWeek === day)
-            .sort((a, b) => a.s.session.startMinutes - b.s.session.startMinutes);
-          const items = dayIndices
-            .map(({ s, i }) => {
+            .filter(({ s }) => s.session.dayOfWeek === day);
+
+          const packed = packOverlappingSlots(dayEntries.map(({ s }) => s.session));
+          const html = dayEntries
+            .map(({ s, i }, entryIndex) => {
+              const pos = computeGridPosition(s.session.startMinutes, s.session.endMinutes);
+              if (pos.kind === "out-of-range") {
+                outOfRangeNotes.push(`${s.label} (${fmtTime(s.session.startMinutes)}–${fmtTime(s.session.endMinutes)}) is outside the displayed 08:00–22:00 window and can't be shown on the grid.`);
+                return "";
+              }
+              if (pos.clippedStart || pos.clippedEnd) {
+                outOfRangeNotes.push(`${s.label} (${fmtTime(s.session.startMinutes)}–${fmtTime(s.session.endMinutes)}) extends outside 08:00–22:00; it's shown clipped to the visible window.`);
+              }
+              const { column, totalColumns } = packed[entryIndex];
               const classes = [
                 "session-block",
                 s.session.kind,
@@ -411,13 +542,54 @@ const plannerDataJson = JSON.stringify({
               ]
                 .filter(Boolean)
                 .join(" ");
-              const text = `${s.label} (${fmtTime(s.session.startMinutes)}–${fmtTime(s.session.endMinutes)})`;
-              return `<p class="${classes}">${esc(text)}</p>`;
+              const style = `top:${pos.topPx}px;height:${pos.heightPx}px;left:calc(${column} * (100% / ${totalColumns}));width:calc(100% / ${totalColumns} - 4px);`;
+              const text = `${s.label.split(" ")[0]} ${KIND_ABBR[s.session.kind]} ${fmtTime(s.session.startMinutes)}–${fmtTime(s.session.endMinutes)}`;
+              return `<button type="button" class="${classes}" style="${style}" data-detail-index="${i}">${esc(text)}</button>`;
             })
             .join("");
-          return `<div class="day-column"><h4>${name}</h4>${items || '<p class="empty-day">No sessions</p>'}</div>`;
-        }).join("");
+          blocksEl.innerHTML = html || "";
+        });
+
+        if (outOfRangeNotes.length > 0) {
+          outOfRangeWarningEl.textContent = outOfRangeNotes.join(" ");
+          outOfRangeWarningEl.hidden = false;
+        } else {
+          outOfRangeWarningEl.hidden = true;
+          outOfRangeWarningEl.textContent = "";
+        }
       }
+
+      weeklyGridEl.addEventListener("click", (event) => {
+        const target = (event.target as HTMLElement).closest<HTMLElement>("[data-detail-index]");
+        if (!target) return;
+        const index = Number(target.dataset.detailIndex);
+        const slot = currentDetailSlots[index];
+        if (!slot) return;
+        const statusText = slot.pending
+          ? "Time scheduled — room not yet chosen."
+          : slot.session.kind === "tutorial"
+            ? "Scheduled."
+            : "Lecture — always available via recording, never blocks your plan.";
+        openSessionDetail(slot, statusText);
+      });
+
+      sessionDetailEl.addEventListener("click", (event) => {
+        if ((event.target as HTMLElement).closest(".session-detail-close")) closeSessionDetail();
+      });
+
+      dayTabsEl.addEventListener("click", (event) => {
+        const button = (event.target as HTMLElement).closest<HTMLButtonElement>(".day-tab");
+        if (!button) return;
+        const day = Number(button.dataset.day);
+        dayTabsEl.querySelectorAll<HTMLButtonElement>(".day-tab").forEach((tab) => {
+          const isActive = Number(tab.dataset.day) === day;
+          tab.classList.toggle("mobile-active", isActive);
+          tab.setAttribute("aria-selected", String(isActive));
+        });
+        weeklyGridEl.querySelectorAll<HTMLElement>(".day-header, .day-column").forEach((el) => {
+          el.classList.toggle("mobile-active", Number(el.dataset.day) === day);
+        });
+      });
 
       function renderAll() {
         renderScheduleList();
