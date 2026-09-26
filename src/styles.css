@@ -47,6 +47,30 @@ main.courses {
   max-width: 68rem;
 }
 
+/* The site-wide `input` rule above (flex: 1; min-width: 12rem; padding:
+   0.4rem 0.6rem) was written for the guestbook's single text <input> — it
+   also matches every checkbox/radio, stretching each one into a large,
+   padded, empty-looking box instead of its natural size, which is the
+   "abnormal whitespace" around every checkbox/radio on this page. Scoped to
+   main.planner only, so the guestbook's own text input (and anything on
+   main.courses) is untouched. Labels wrapping these inputs (.preview-toggle,
+   .tutorial-option, .room-option) already use flex + gap for spacing, so
+   once the input is back to its natural size it sits close to its text. */
+main.planner input[type="checkbox"],
+main.planner input[type="radio"] {
+  flex: none;
+  width: auto;
+  min-width: 0;
+  padding: 0;
+  margin: 0;
+}
+
+main.planner input[type="checkbox"]:focus-visible,
+main.planner input[type="radio"]:focus-visible {
+  outline: 2px solid #0b5fff;
+  outline-offset: 2px;
+}
+
 /* Planner page layout (Phase 3 revision): a compact left list you schedule
    from, and a large grid on the right — MyTimetable's split, not a wizard.
    Stacks on narrow viewports via the media query below. */
@@ -57,7 +81,10 @@ main.courses {
 }
 
 .planner-left {
-  flex: 0 0 22rem;
+  /* Narrowed from 22rem so the weekly grid (the thing you actually read)
+     gets priority for width — 19rem sits in the 280-320px range this was
+     asked to land in, not just "a bit less than before". */
+  flex: 0 0 19rem;
   min-width: 0;
 }
 
@@ -178,21 +205,68 @@ main.courses {
   color: #0b5fff;
 }
 
+/* Compact expand/collapse cards (Phase 3 layout revision): padding and
+   vertical spacing cut down from the original 1rem/1rem so many candidates
+   fit in the narrower left column, but font-size is left alone — the
+   request was "compact", not "tiny text". At most one card is expanded
+   (see .schedule-card-toggle below); everything else stays a single
+   summary row. */
 .schedule-card {
   border: 1px solid #ddd;
   border-radius: 0.5rem;
-  padding: 1rem;
-  margin-block-end: 1rem;
+  padding: 0.5rem 0.75rem;
+  margin-block-end: 0.5rem;
 }
 
-.schedule-card h3 {
-  margin-block-start: 0;
+.schedule-card-summary {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+/* Un-styled as a button so it reads as the card's summary row, not a call
+   to action — but it's still a real <button>, deliberately separate from
+   the preview-include-checkbox next to it, so expanding/collapsing a card
+   can never toggle what's in the preview and vice versa. */
+.schedule-card-toggle {
+  flex: 1;
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  min-width: 0;
+  border: none;
+  background: none;
+  font: inherit;
+  text-align: left;
+  padding: 0.15rem 0;
+  cursor: pointer;
+}
+
+.schedule-card-toggle .chevron {
+  flex: 0 0 auto;
+  display: inline-block;
+  color: #666;
+}
+
+.schedule-card-toggle .course-code {
+  font-weight: 600;
+}
+
+.schedule-card-toggle .current-time {
+  font-size: 0.8rem;
+  color: #555;
+}
+
+.preview-toggle-label {
+  font-size: 0.72rem;
+  color: #666;
 }
 
 .tutorial-options {
   border: none;
   padding: 0;
-  margin: 0.75rem 0 0;
+  margin: 0.5rem 0 0;
 }
 
 .tutorial-options legend {
@@ -200,16 +274,41 @@ main.courses {
   padding: 0;
 }
 
+.tutorial-option-row {
+  margin-block-end: 0.3rem;
+}
+
+/* Compact single line: radio + day + start-end + a short status word/phrase,
+   replacing the old block-per-option layout that repeated a full sentence
+   ("No conflict with your current preview") on every single option. */
+.tutorial-option {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  font-size: 0.9rem;
+}
+
+.option-time {
+  font-weight: 500;
+}
+
 .room-picker {
   border: none;
   padding: 0;
-  margin: 0.25rem 0 0.75rem 1.5rem;
+  margin: 0.2rem 0 0.5rem 1.4rem;
 }
 
 .room-option {
   display: block;
-  font-size: 0.9rem;
-  margin-block-end: 0.25rem;
+  font-size: 0.85rem;
+  margin-block-end: 0.2rem;
+}
+
+.tutorial-location {
+  margin: 0 0 0 1.4rem;
+  font-size: 0.85rem;
+  color: #0a7a2f;
 }
 
 /* Time-proportional weekly grid (Phase 3 layout revision). Every day shares
@@ -226,15 +325,25 @@ main.courses {
   display: none; /* desktop shows all seven day columns at once */
 }
 
+/* No overflow/max-height here on purpose (layout revision): this used to be
+   its own 75vh scroll box, which meant the whole page could end up with two
+   nested vertical scrollbars. The grid now always renders at its full
+   natural height (the fixed --grid-height, 896px, plus the header/tabs on
+   top of it) and the *page's own* scrollbar is the only way to scroll it —
+   any overflow value other than the default `visible` here would create a
+   second scrolling ancestor and both break that (see the sticky header note
+   below) and reintroduce the nested-scrollbar problem. */
 .weekly-grid-scroll {
-  max-height: 75vh;
-  overflow-y: auto;
-  overflow-x: hidden;
   border: 1px solid #ccc;
   border-radius: 0.5rem;
 }
 
-/* Sticky weekday header row: stays visible while the grid body scrolls. */
+/* Sticky weekday header row: stays visible while the page scrolls the grid
+   body underneath it. This only works because nothing between this element
+   and the document — .weekly-grid-scroll, .planner-right, .planner-layout,
+   main.planner, body — sets an overflow other than the default `visible`;
+   any of them clipping or scrolling on their own would either break the
+   stickiness or visually cover the day columns beneath it. */
 .weekly-grid-header {
   position: sticky;
   top: 0;

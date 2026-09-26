@@ -109,13 +109,14 @@ const plannerDataJson = JSON.stringify({
               // point rather than a blank div.
               candidates.map((c) => (
                 <article class="schedule-card" data-course-id={c.courseId}>
-                  <h3>
-                    {c.course.code} {c.required === 1 && <span class="badge">Required</span>}
-                  </h3>
-                  <label class="preview-toggle">
-                    <input type="checkbox" class="preview-include-checkbox" data-course-id={c.courseId} />
-                    Include in current preview
-                  </label>
+                  <div class="schedule-card-summary">
+                    <label class="preview-toggle">
+                      <input type="checkbox" class="preview-include-checkbox" data-course-id={c.courseId} />
+                      <span class="preview-toggle-label">In preview</span>
+                    </label>
+                    <span class="course-code">{c.course.code}</span>
+                    {c.required === 1 && <span class="badge">Required</span>}
+                  </div>
                 </article>
               ))
             }
@@ -216,10 +217,9 @@ const plannerDataJson = JSON.stringify({
       type CourseRow = { id: number; code: string; title: string; sessions: SessionRow[] };
 
       const DAY_NAMES = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+      const DAY_ABBR = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
       const pad = (n: number) => String(n).padStart(2, "0");
       const fmtTime = (m: number) => `${pad(Math.floor(m / 60))}:${pad(m % 60)}`;
-      const fmtSession = (s: { dayOfWeek: number; startMinutes: number; endMinutes: number }) =>
-        `${DAY_NAMES[s.dayOfWeek]} ${fmtTime(s.startMinutes)}–${fmtTime(s.endMinutes)}`;
       const esc = (s: string) => s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
 
       const dataEl = document.getElementById("planner-data");
@@ -353,18 +353,70 @@ const plannerDataJson = JSON.stringify({
           .map(({ label, session }) => ({ label, session }));
       }
 
+      // Which candidate's full tutorial/room options are shown, if any — at
+      // most one at a time (an accordion, not "everything open"), which is
+      // what keeps the left column compact. This is pure UI state: it never
+      // reads or writes `preview`/`candidates`, and the preview-include
+      // checkbox's own change handler is a separate listener on a separate
+      // element, so expanding/collapsing a card can never toggle what's in
+      // the preview, and checking/unchecking that box can never itself run
+      // the expand-toggle's code path.
+      let expandedCourseId: number | null = null;
+
       function renderScheduleList() {
         const entries = [...candidates.entries()];
+
+        // Per-course "does this course's current tutorial clash with
+        // anything else in the preview" flag, for the collapsed row's status
+        // chip — same classifyOverlap rule the expanded option list and the
+        // weekly grid use, just grouped by course instead of by slot index.
+        const allSlots = allPreviewSlots();
+        const courseHasClash = new Set<number>();
+        for (let i = 0; i < allSlots.length; i++) {
+          for (let j = i + 1; j < allSlots.length; j++) {
+            if (classifyOverlap(allSlots[i].session, allSlots[j].session) === "tutorial-clash") {
+              courseHasClash.add(allSlots[i].courseId);
+              courseHasClash.add(allSlots[j].courseId);
+            }
+          }
+        }
+
         scheduleListEl.innerHTML = entries
           .map(([courseId, c]) => {
             const course = courseById.get(courseId)!;
             const inPreview = preview.has(courseId);
-            const tutorials = course.sessions.filter((s) => s.kind === "tutorial");
-            const options = groupTutorialTimeOptions(tutorials);
             const entry = preview.get(courseId);
+            const expanded = inPreview && expandedCourseId === courseId;
+
+            let timeHtml = "";
+            let statusHtml = "";
+            if (inPreview) {
+              if (entry?.dayOfWeek == null) {
+                statusHtml = '<span class="incomplete-note">Choose a time</span>';
+              } else {
+                timeHtml = `<span class="current-time">${DAY_ABBR[entry.dayOfWeek]} ${fmtTime(entry.startMinutes!)}–${fmtTime(entry.endMinutes!)}</span>`;
+                if (courseHasClash.has(courseId)) statusHtml = '<span class="conflict-note">Clash</span>';
+                else if (entry.sessionId == null) statusHtml = '<span class="incomplete-note">Room pending</span>';
+                else statusHtml = '<span class="ok-note">Scheduled</span>';
+              }
+            }
+
+            // Not in preview: nothing to expand, so this is plain text, not
+            // a button — there's no full-options panel a click could open.
+            const summaryHtml = inPreview
+              ? `<button type="button" class="schedule-card-toggle" data-course-id="${courseId}" aria-expanded="${expanded}">
+                  <span class="chevron" aria-hidden="true">${expanded ? "▾" : "▸"}</span>
+                  <span class="course-code">${esc(course.code)}</span>
+                  ${c.required ? '<span class="badge">Required</span>' : ""}
+                  ${timeHtml}
+                  ${statusHtml}
+                </button>`
+              : `<span class="course-code">${esc(course.code)}</span>${c.required ? ' <span class="badge">Required</span>' : ""}`;
 
             let optionsHtml = "";
-            if (inPreview) {
+            if (expanded) {
+              const tutorials = course.sessions.filter((s) => s.kind === "tutorial");
+              const options = groupTutorialTimeOptions(tutorials);
               if (options.length === 0) {
                 optionsHtml = "<p>This course has no tutorials to choose from.</p>";
               } else {
@@ -374,28 +426,31 @@ const plannerDataJson = JSON.stringify({
                     const key = `${option.dayOfWeek}:${option.startMinutes}:${option.endMinutes}`;
                     const checked = entry?.dayOfWeek === option.dayOfWeek && entry.startMinutes === option.startMinutes && entry.endMinutes === option.endMinutes;
                     const optionSlot: KindedSlot = { dayOfWeek: option.dayOfWeek, startMinutes: option.startMinutes, endMinutes: option.endMinutes, kind: "tutorial" };
-                    const tutorialClashes: string[] = [];
-                    const lectureNotes: string[] = [];
+                    const tutorialClashes: { label: string; session: KindedSlot }[] = [];
+                    const lectureNotes: { label: string; session: KindedSlot }[] = [];
                     for (const slot of locked) {
                       const cls = classifyOverlap(optionSlot, slot.session);
-                      if (cls === "tutorial-clash") tutorialClashes.push(slot.label);
-                      else if (cls === "lecture-note") lectureNotes.push(slot.label);
+                      if (cls === "tutorial-clash") tutorialClashes.push(slot);
+                      else if (cls === "lecture-note") lectureNotes.push(slot);
                     }
-                    const notesHtml = [
-                      tutorialClashes.length > 0
-                        ? `<span class="conflict-note">Clashes with ${tutorialClashes.map((c) => `"${esc(c)}"`).join(", ")} in your current preview</span>`
-                        : "",
-                      lectureNotes.length > 0
-                        ? `<span class="lecture-hint">Overlaps a lecture in your current preview (fine — available via recording): ${lectureNotes.map((c) => `"${esc(c)}"`).join(", ")}</span>`
-                        : "",
-                      tutorialClashes.length === 0 && lectureNotes.length === 0 ? '<span class="ok-note">No conflict with your current preview</span>' : "",
-                    ].join(" ");
+                    // "No conflict" collapses to a short word instead of a
+                    // full sentence repeated on every option — but a real
+                    // conflict still names the specific course and time it
+                    // clashes with, never just "Clash".
+                    let statusNoteHtml: string;
+                    if (tutorialClashes.length > 0) {
+                      statusNoteHtml = `<span class="conflict-note">Clash: ${tutorialClashes.map((s) => `"${esc(s.label)}" ${fmtTime(s.session.startMinutes)}–${fmtTime(s.session.endMinutes)}`).join(", ")}</span>`;
+                    } else if (lectureNotes.length > 0) {
+                      statusNoteHtml = `<span class="lecture-hint">Overlaps lecture (ok, recording available): ${lectureNotes.map((s) => `"${esc(s.label)}" ${fmtTime(s.session.startMinutes)}–${fmtTime(s.session.endMinutes)}`).join(", ")}</span>`;
+                    } else {
+                      statusNoteHtml = '<span class="ok-note">No conflict</span>';
+                    }
 
                     let roomHtml = "";
                     if (checked && option.sections.length > 1) {
                       const chosenSessionId = entry?.sessionId ?? null;
                       roomHtml = `<fieldset class="room-picker">
-                        <legend>${chosenSessionId == null ? '<span class="incomplete-note">Time scheduled — choose a room to finish scheduling this tutorial</span>' : "Room"}</legend>
+                        <legend>${chosenSessionId == null ? '<span class="incomplete-note">Choose a room</span>' : "Room"}</legend>
                         ${option.sections
                           .map(
                             (s) =>
@@ -404,25 +459,31 @@ const plannerDataJson = JSON.stringify({
                           .join("")}
                       </fieldset>`;
                     } else if (checked && option.sections.length === 1) {
-                      roomHtml = `<p class="ok-note">Room: ${esc(option.sections[0].location)}</p>`;
+                      roomHtml = `<p class="tutorial-location">${esc(option.sections[0].location)}</p>`;
                     }
 
-                    return `<label class="tutorial-option">
-                        <input type="radio" class="tutorial-radio" name="tutorial-${courseId}" data-course-id="${courseId}" data-time-key="${key}" data-day="${option.dayOfWeek}" data-start="${option.startMinutes}" data-end="${option.endMinutes}" ${checked ? "checked" : ""} />
-                        ${fmtSession(option)}${option.sections.length > 1 ? " (multiple rooms)" : ""} ${notesHtml}
-                      </label>${roomHtml}`;
+                    return `<div class="tutorial-option-row">
+                        <label class="tutorial-option">
+                          <input type="radio" class="tutorial-radio" name="tutorial-${courseId}" data-course-id="${courseId}" data-time-key="${key}" data-day="${option.dayOfWeek}" data-start="${option.startMinutes}" data-end="${option.endMinutes}" ${checked ? "checked" : ""} />
+                          <span class="option-time">${DAY_ABBR[option.dayOfWeek]} ${fmtTime(option.startMinutes)}–${fmtTime(option.endMinutes)}${option.sections.length > 1 ? " (multi-room)" : ""}</span>
+                          ${statusNoteHtml}
+                        </label>
+                        ${roomHtml}
+                      </div>`;
                   })
                   .join("");
               }
             }
 
             return `<article class="schedule-card" data-course-id="${courseId}">
-              <h3>${esc(course.code)} ${c.required ? '<span class="badge">Required</span>' : ""}</h3>
-              <label class="preview-toggle">
-                <input type="checkbox" class="preview-include-checkbox" data-course-id="${courseId}" ${inPreview ? "checked" : ""} />
-                Include in current preview
-              </label>
-              ${inPreview ? `<fieldset class="tutorial-options"><legend>Tutorial time</legend>${optionsHtml}</fieldset>` : ""}
+              <div class="schedule-card-summary">
+                <label class="preview-toggle">
+                  <input type="checkbox" class="preview-include-checkbox" data-course-id="${courseId}" ${inPreview ? "checked" : ""} />
+                  <span class="preview-toggle-label">In preview</span>
+                </label>
+                ${summaryHtml}
+              </div>
+              ${expanded ? `<fieldset class="tutorial-options"><legend>Tutorial time</legend>${optionsHtml}</fieldset>` : ""}
             </article>`;
           })
           .join("");
@@ -598,13 +659,34 @@ const plannerDataJson = JSON.stringify({
         savePreviewToStorage();
       }
 
+      // Deliberately a separate listener from the "change" one below, on a
+      // separate element (.schedule-card-toggle is a <button>, never the
+      // checkbox) — this is what guarantees expand/collapse can't reach the
+      // preview-include-checkbox's state, in either direction.
+      scheduleListEl.addEventListener("click", (event) => {
+        const toggle = (event.target as HTMLElement).closest<HTMLButtonElement>(".schedule-card-toggle");
+        if (!toggle) return;
+        const courseId = Number(toggle.dataset.courseId);
+        expandedCourseId = expandedCourseId === courseId ? null : courseId;
+        renderScheduleList();
+      });
+
       scheduleListEl.addEventListener("change", (event) => {
         const target = event.target as HTMLInputElement;
         const courseId = Number(target.dataset.courseId);
         if (!courseId) return;
         if (target.classList.contains("preview-include-checkbox")) {
-          if (target.checked) preview.set(courseId, { dayOfWeek: null, startMinutes: null, endMinutes: null, sessionId: null });
-          else preview.delete(courseId);
+          if (target.checked) {
+            preview.set(courseId, { dayOfWeek: null, startMinutes: null, endMinutes: null, sessionId: null });
+            // Newly added — this is now "the course being edited", so open
+            // it (and, being an accordion, implicitly close whatever else
+            // was open) rather than leaving the visitor to hunt for a
+            // now-just-appeared expand toggle.
+            expandedCourseId = courseId;
+          } else {
+            preview.delete(courseId);
+            if (expandedCourseId === courseId) expandedCourseId = null;
+          }
           renderAll();
         } else if (target.classList.contains("tutorial-radio")) {
           const dayOfWeek = Number(target.dataset.day);

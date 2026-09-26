@@ -449,3 +449,135 @@ Commit for this round:
 Deliberately out of scope this round, per my instruction: phase 4's
 auto-generation is still untouched, and no candidate, preview, or confirmed-
 enrolment behaviour changed — this was a rendering-only revision.
+
+### Phase 3 revision — layout fixes after actually looking at the grid
+
+The previous round shipped without anyone having looked at real rendering, by
+its own admission. This round is me reporting back what a real look at the
+running dev server actually showed, and asking the agent to fix four
+specific things I found — still layout/UI only, no data-model change.
+
+1. The grid had grown its own internal scrollbar (`.weekly-grid-scroll` was
+   capped at `max-height: 75vh` with `overflow-y: auto`), so the page ended
+   up with two nested vertical scrollbars — one for the page, one for the
+   grid — instead of one. I asked for the internal one gone entirely: the
+   grid should render at its full natural height (still 896px of body, at
+   64px/hour, unchanged) and only the browser's own page scrollbar should
+   move it.
+2. The left-hand candidate list was too tall — every candidate showed its
+   full set of tutorial time/room options at once, all the time. I asked for
+   a compact, expand/collapse card list instead, with only the checkbox,
+   course code, required badge, current tutorial time and a short status
+   visible when collapsed, and the full option list only when expanded — and
+   for the "add to preview" checkbox to never be affected by expanding or
+   collapsing a card, or vice versa.
+3. Checkboxes and radio buttons across the page were rendering as large,
+   padded, oddly-spaced boxes instead of sitting close to their label text —
+   visible in the screenshot as abnormal whitespace around every tickbox.
+4. The left column (`22rem` ≈ 352px) was wider than it needed to be for a
+   compact list, at the expense of the timetable, which is the part of the
+   page actually worth reading. I asked for the left column narrowed to
+   roughly 280–320px and the timetable to take the rest.
+
+What the agent changed, and the calls it made where my instruction left room
+for one:
+
+- **Scroll removal (#1).** `.weekly-grid-scroll` no longer sets any
+  `overflow`/`max-height` at all — it's now just a bordered wrapper, not a
+  scroll container. `.weekly-grid-header` keeps `position: sticky; top: 0`,
+  but it now sticks against the page's own scroll instead of a local one.
+  The agent checked every ancestor between the header and `<body>` —
+  `.weekly-grid-scroll`, `.planner-right`, `.planner-layout`, `main.planner`,
+  `body` — confirming none of them set an `overflow` other than the default
+  `visible` (that was the actual risk I'd flagged: any of them clipping or
+  scrolling on their own would break the sticky behaviour or hide content
+  under it). `.planner-layout` already had `align-items: flex-start` from
+  the previous round, so the now-taller grid still isn't stretched to match
+  the left column's height — that part didn't need a new fix, just
+  re-confirming it still held once the internal scroll box was gone.
+- **Compact cards (#2).** The card list is now an accordion: at most one
+  card's full tutorial/room options are shown at a time, tracked by a new
+  client-only `expandedCourseId` variable that never reads or writes the
+  `preview`/`candidates` data. Expanding/collapsing is a separate `<button
+  class="schedule-card-toggle">`, with its own `click` listener on the list
+  container — a different element and a different event from the preview
+  checkbox's own `change` listener, which is what actually guarantees
+  neither one can affect the other, rather than just hoping they don't. One
+  judgement call I made here, since my instruction didn't fully spell it
+  out: when you tick a candidate into the preview, the agent now also opens
+  that card automatically (there's now something to configure — a tutorial
+  time), and closes it again if you untick it. Clicking the expand toggle
+  itself never touches the checkbox. If I'd rather this be fully manual with
+  no auto-open, that's a one-line change to point out at review time.
+  Collapsed rows show the checkbox, course code, required badge, the chosen
+  time (or "Choose a time" if none yet), and a short status —
+  "Scheduled" / "Room pending" / "Clash" — using the same `classifyOverlap`
+  rule the grid and the option list already used, just grouped by course
+  instead of by slot. Expanded, each time option is one line (radio + day +
+  start–end + a short status word), with the room/location on the line
+  below only when relevant. "No conflict" is now that one short phrase
+  instead of a full sentence repeated per option; a real clash still names
+  the specific course and the specific time it clashes with, not just the
+  word "Clash" — I checked this stayed true after the rewrite, since
+  shortening the good case is easy to over-apply to the bad case by
+  accident.
+- **Checkbox/radio whitespace (#3).** The cause was exactly what I
+  suspected from the screenshot: `src/styles.css`'s original, guestbook-era
+  `input { flex: 1; min-width: 12rem; padding: 0.4rem 0.6rem; }` rule has no
+  type selector, so it was also stretching every checkbox and radio button
+  on the page into an oversized, padded box. The agent didn't touch that
+  global rule — instead it added a second, more specific rule scoped to
+  `main.planner input[type="checkbox"]` / `input[type="radio"]` that resets
+  them back to their natural size, so the guestbook's text input (and
+  anything on `main.courses`) is untouched. It also added an explicit
+  `:focus-visible` outline for the same scoped selectors, since a fix that
+  changes `padding`/`width` on a form control is worth double-checking still
+  leaves a visible focus ring. The existing `<label>` wrapping in
+  `.preview-toggle`/`.tutorial-option`/`.room-option` was already correct
+  (clicking the text already toggled the input); this was purely about the
+  input's own box size and its gap from the label text.
+- **Left column width (#4).** `.planner-left` went from `flex: 0 0 22rem`
+  to `flex: 0 0 19rem` (304px, inside the 280–320px range I asked for);
+  `.planner-right` was already `flex: 1` and needed no change. Session
+  block text (course code / kind / time) is unchanged — it was already the
+  full course code, not an abbreviation, so a wider right column just gives
+  it more breathing room, nothing about what it displays changed. The
+  existing mobile single-day view and day-tabs switcher were not touched by
+  this change at all — the 640px breakpoint media query is untouched.
+
+Verification the agent ran before this round's commit: `pnpm typecheck`
+(0 errors, same 2 pre-existing hints as every prior round), `pnpm test`
+(13 spec files, 136 tests, all still passing — including `spec/planner.test.ts`,
+whose helpers only look for the `<article class="schedule-card"
+data-course-id="...">` marker and the confirmed-enrolment list, not the
+card's exact inner markup, so the accordion rewrite didn't need any spec
+changes), and `pnpm run build`. It also ran read-only `curl` checks against
+the still-running dev server to confirm, from the actual served HTML: the
+compiled CSS no longer contains `max-height: 75vh` or `overflow-y: auto`
+anywhere; the only remaining `overflow` declarations in the stylesheet are
+on `.session-block` (text-truncation inside a leaf block, not an ancestor of
+the sticky header) and the mobile `.day-tabs` row (also not an ancestor of
+it); the server-rendered `.planner-left` rule reads `flex: 0 0 19rem`; and
+the server-rendered candidate cards use the new compact
+`.schedule-card-summary`/`.preview-toggle-label`/`.course-code` structure
+with no leftover `<h3>` or "Include in current preview" text.
+
+What I still have not had independently verified: I'm the one who reported
+the screenshot problems this round, so unlike the previous round, someone
+has now actually looked at real rendering — but that was me, not the agent,
+which still has no browser-automation tool available to it. The agent's own
+checks above are all structural (compiled CSS, served HTML, passing tests),
+not a look at actual pixels — it hasn't claimed otherwise. I still need to
+open the dev server myself at both 1920×1080 and 390×844 to confirm the
+scrollbar is genuinely single, the sticky header still visibly stays in
+place while scrolling, the accordion cards read cleanly at the narrower
+width, and the checkbox/radio fix actually looks right rather than just
+computing the numbers I expected.
+
+Commit for this round: layout/CSS revision above, plus this PROCESS.md
+update — hashes to be filled in once committed.
+
+Deliberately out of scope this round, per my instruction: candidate data,
+tutorial/room selection logic, conflict-detection rules, and confirmed-
+enrolment data are all unchanged — only layout and the new client-only
+expand/collapse state moved.
