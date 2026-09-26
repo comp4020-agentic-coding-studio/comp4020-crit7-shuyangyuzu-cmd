@@ -220,6 +220,12 @@ export function confirmEnrollment(choices: EnrollmentChoice[]): ConfirmedEnrollm
   if (choices.length === 0) {
     throw new ValidationError("at least one course choice is required to confirm a plan");
   }
+  // The candidate list itself has no cap, and neither does a manual preview
+  // or auto-generation mode A — only the confirmed enrolment itself is
+  // capped, per CLAUDE.md's "candidate list has no enrolment cap" rule.
+  if (choices.length > 4) {
+    throw new ValidationError(`A confirmed enrolment can have at most 4 courses, got ${choices.length}`);
+  }
   const courseIds = choices.map((choice) => choice.courseId);
   if (new Set(courseIds).size !== courseIds.length) {
     throw new ValidationError("each course can only appear once in a confirmed plan");

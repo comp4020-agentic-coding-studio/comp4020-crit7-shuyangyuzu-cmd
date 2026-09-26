@@ -682,6 +682,102 @@ main.planner input[type="radio"]:focus-visible {
   color: #8a6100;
 }
 
+.confirm-section {
+  border: 1px solid #ccc;
+  border-radius: 0.5rem;
+  padding: 1rem;
+  margin-block-end: 1.5rem;
+  background: #fafafa;
+}
+
+#confirm-status {
+  font-size: 0.9rem;
+  min-height: 1.2em;
+  color: #0a7a2f;
+}
+
+.confirmed-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.5rem 1rem;
+  margin-block-start: 0.75rem;
+}
+
+#confirmed-list {
+  list-style: none;
+  padding-inline-start: 0;
+}
+
+#confirmed-list li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  padding-block: 0.4rem;
+  border-bottom: 1px solid #eee;
+}
+
+/* Fixed-position dialogs (confirm / load-into-preview / withdraw), each a
+   focused, must-decide overlay rather than inline content — reachable
+   directly from this page (CLAUDE.md), never a trip to another page. The
+   backdrop dim is a single oversized box-shadow rather than a separate
+   overlay element, since the dialog markup itself has no wrapper div to
+   hang one on. */
+.confirm-dialog {
+  position: fixed;
+  inset: 0;
+  margin: auto;
+  z-index: 20;
+  max-width: 32rem;
+  width: calc(100% - 2rem);
+  max-height: calc(100vh - 4rem);
+  overflow-y: auto;
+  background: #fff;
+  border-radius: 0.5rem;
+  padding: 1.25rem 1.5rem;
+  box-shadow:
+    0 0 0 100vmax rgb(0 0 0 / 45%),
+    0 0.25rem 1rem rgb(0 0 0 / 25%);
+}
+
+.confirm-dialog-actions {
+  display: flex;
+  gap: 0.75rem;
+  margin-block-start: 1rem;
+}
+
+.diff-group {
+  margin-block-end: 0.75rem;
+}
+
+.diff-group h4 {
+  margin-block-end: 0.25rem;
+  font-size: 0.9rem;
+}
+
+.diff-group ul {
+  margin: 0;
+  padding-inline-start: 1.2rem;
+  font-size: 0.9rem;
+}
+
+.diff-added h4 {
+  color: #0a7a2f;
+}
+
+.diff-removed h4 {
+  color: #a30000;
+}
+
+.diff-changed h4 {
+  color: #8a6100;
+}
+
+.diff-unchanged h4 {
+  color: #555;
+}
+
 @media (max-width: 640px) {
   main.planner,
   main.courses {

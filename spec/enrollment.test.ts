@@ -4,7 +4,7 @@ const baseUrl = inject("baseUrl");
 
 type SessionRow = { id: number; kind: string; label: string };
 type CourseRow = { id: number; code: string; sessions: SessionRow[] };
-type EnrollmentRow = { course: { code: string } };
+type EnrollmentRow = { courseId: number; tutorialSessionId: number; course: { code: string } };
 
 const json = (path: string, method: string, body?: unknown) =>
   fetch(new URL(path, baseUrl), {
@@ -38,17 +38,27 @@ describe("enrollment", () => {
   });
 
   it("confirms a feasible 4-course plan", async () => {
-    const res = await json("/api/enrollment", "POST", {
-      choices: [
-        choice("COMP1010", "Tutorial A"),
-        choice("COMP3120", "Tutorial B"),
-        choice("MATH1013", "Tutorial B"),
-        choice("COMP4444", "Tutorial B"),
-      ],
-    });
+    const chosen = [
+      choice("COMP1010", "Tutorial A"),
+      choice("COMP3120", "Tutorial B"),
+      choice("MATH1013", "Tutorial B"),
+      choice("COMP4444", "Tutorial B"),
+    ];
+    const res = await json("/api/enrollment", "POST", { choices: chosen });
     expect(res.status).toBe(200);
     const body = (await res.json()) as EnrollmentRow[];
     expect(body.map((row) => row.course.code).sort()).toEqual(["COMP1010", "COMP3120", "COMP4444", "MATH1013"]);
+
+    // A reload rebuilds the planner page from exactly this same GET
+    // (src/pages/planner.astro reads listConfirmedEnrollments() fresh on
+    // every request, no caching) — so "reload persists exactly what was
+    // confirmed" rests on the *exact* tutorialSessionId round-tripping per
+    // course, not just the course list matching.
+    const reloaded = await getEnrollment();
+    const bySessionId = new Map(chosen.map((c) => [c.courseId, c.tutorialSessionId]));
+    for (const row of reloaded) {
+      expect(row.tutorialSessionId).toBe(bySessionId.get(row.courseId));
+    }
   });
 
   // COMP1010 and COMP2100 share an identical lecture time but that's no
@@ -145,6 +155,18 @@ describe("enrollment", () => {
     expect(res.status).toBe(400);
   });
 
+  // Stands in for "a multi-section tutorial time left pending (no room/
+  // section chosen yet)": the planner UI never lets that state reach this
+  // endpoint at all (the confirm button is disabled until every course has a
+  // concrete session id), so this checks the same thing the API route
+  // actually guards against — a choice with no tutorialSessionId.
+  it("rejects a choice with no tutorialSessionId, standing in for a still-pending section", async () => {
+    const res = await json("/api/enrollment", "POST", {
+      choices: [{ courseId: courses.COMP1010.id }],
+    });
+    expect(res.status).toBe(400);
+  });
+
   it("404s an unknown course id", async () => {
     const res = await json("/api/enrollment", "POST", {
       choices: [{ courseId: 999999, tutorialSessionId: session("COMP1010", "Tutorial A").id }],
@@ -162,6 +184,25 @@ describe("enrollment", () => {
   it("rejects an empty choice list", async () => {
     const res = await json("/api/enrollment", "POST", { choices: [] });
     expect(res.status).toBe(400);
+  });
+
+  // The candidate list and a manual/generated preview have no course-count
+  // cap; only the confirmed enrolment itself is capped at 4 (PLAN.md). The
+  // rejection fires before the transaction opens anything, so this can't
+  // disturb the plan the later tests in this file expect.
+  it("rejects a confirm submission of more than 4 courses", async () => {
+    const res = await json("/api/enrollment", "POST", {
+      choices: [
+        choice("COMP1010", "Tutorial A"),
+        choice("COMP2100", "Tutorial A"),
+        choice("COMP3120", "Tutorial A"),
+        choice("COMP4444", "Tutorial A"),
+        choice("MATH1013", "Tutorial A"),
+      ],
+    });
+    expect(res.status).toBe(400);
+    const err = (await res.json()) as { error: string };
+    expect(err.error).toMatch(/at most 4/i);
   });
 
   it("still holds exactly the pre-existing plan after every rejected attempt above", async () => {

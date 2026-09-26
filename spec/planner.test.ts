@@ -99,15 +99,33 @@ describe("planner page", () => {
   // concurrently change that resource between two requests in this file,
   // which would make a cross-request comparison flaky through no fault of
   // the page.
-  it("shows confirmed enrolment read-only, with no confirm/withdraw controls on this page", async () => {
+  //
+  // Phase 5.1 moved confirming onto this page itself (CLAUDE.md: confirming
+  // must be directly reachable from the planner, never a trip back to
+  // course-browsing first), so this no longer asserts the control is
+  // absent — it asserts the opposite: it's present, and structurally
+  // distinct from the confirmed-enrolment display itself. Withdraw controls
+  // land in a later commit (Phase 5.3), not asserted here yet.
+  it("shows confirmed enrolment with a confirm control reachable directly on this page", async () => {
     const html = await getPlannerHtml();
     expect(html).toContain('id="confirmed-heading"');
-    expect(html).not.toMatch(/withdraw/i);
+    expect(html).toContain('id="confirm-enrolment-btn"');
+    // Confirm is a client-script action (fetch to /api/enrollment), never a
+    // plain form post — there's no server-rendered form to submit.
     expect(html).not.toContain('action="/api/enrollment"');
 
     const hasList = html.includes('id="confirmed-list"');
     const hasEmptyMessage = html.includes("don't have a confirmed enrolment yet");
     expect(hasList || hasEmptyMessage).toBe(true);
+  });
+
+  it("discloses that confirming never contacts any real ANU system and requires a review step before writing", async () => {
+    const html = await getPlannerHtml();
+    const sectionIndex = html.indexOf('id="confirm-heading"');
+    expect(sectionIndex).toBeGreaterThan(-1);
+    const sectionBlock = html.slice(sectionIndex, sectionIndex + 1600);
+    expect(sectionBlock).toMatch(/never contacts anuhub|never.*real anu system/i);
+    expect(sectionBlock).toContain('id="confirm-dialog"');
   });
 
   // Phase 4: auto-schedule structural checks. These assert what's actually

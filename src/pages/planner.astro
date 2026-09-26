@@ -45,6 +45,15 @@ const plannerDataJson = JSON.stringify({
   courses,
   candidates: candidates.map((c) => ({ courseId: c.courseId, required: c.required === 1 })),
   preferences,
+  // Only the id pair — the client already has every course's full session
+  // list (courseById), so it looks up the tutorial's label/time/location
+  // from there rather than duplicating it here. Using the full course
+  // catalogue (not just candidates) for that lookup is what lets a
+  // confirmed course survive being removed as a candidate: its own row and
+  // sessions are still in `courses`, just no longer selectable as a
+  // preview/candidate entry (see the client's "no longer a candidate"
+  // handling in loadConfirmedIntoPreview).
+  confirmed: confirmed.map((e) => ({ courseId: e.courseId, tutorialSessionId: e.tutorialSessionId })),
 }).replace(/</g, "\\u003c");
 ---
 
@@ -255,27 +264,55 @@ const plannerDataJson = JSON.stringify({
         </div>
       </section>
 
+      <section aria-labelledby="confirm-heading" class="confirm-section">
+        <h2 id="confirm-heading">Confirm your preview</h2>
+        <p>
+          Confirming replaces your <strong>whole</strong> saved enrolment below with exactly the
+          courses and tutorial times currently in your preview above. This only ever writes to
+          this prototype's own demo database, for the same single demo student — it never
+          contacts ANUHub, Programs and Courses, Timetable or any other real ANU system, and
+          nothing here is a real enrolment action.
+        </p>
+        <p id="confirm-blocked-note" class="conflict-note" role="status" aria-live="polite" hidden></p>
+        <button type="button" id="confirm-enrolment-btn">Review and confirm enrolment</button>
+        <p id="confirm-status" role="status" aria-live="polite"></p>
+
+        <div id="confirm-dialog" class="confirm-dialog" role="dialog" aria-label="Confirm enrolment" hidden>
+          <h3>Confirm this enrolment?</h3>
+          <p>
+            This replaces your whole confirmed enrolment with the plan below. It's still only a
+            write to this prototype's own demo database — not a real ANU enrolment action, and
+            nothing is sent to any real ANU system.
+          </p>
+          <div id="confirm-dialog-diff"></div>
+          <p id="confirm-dialog-error" class="conflict-note" role="alert" hidden></p>
+          <div class="confirm-dialog-actions">
+            <button type="button" id="confirm-dialog-confirm">Yes, confirm enrolment</button>
+            <button type="button" id="confirm-dialog-cancel">Cancel</button>
+          </div>
+        </div>
+      </section>
+
       <section aria-labelledby="confirmed-heading">
         <h2 id="confirmed-heading">Your confirmed enrolment</h2>
         <p>
-          Read-only on this page — confirming a new plan or ending this one is a later phase, not
-          built here yet. Nothing on this page (your preview, choosing a tutorial or room) ever
-          changes what's listed here.
+          What's actually saved for this demo student, kept separate from the preview above — it
+          only ever changes when you confirm (above), which only ever writes to this prototype's
+          own demo database, never a real ANU system.
         </p>
-        {
-          confirmed.length === 0 ? (
-            <p>You don't have a confirmed enrolment yet.</p>
-          ) : (
-            <ul id="confirmed-list">
-              {confirmed.map((e) => (
-                <li>
-                  {e.course.code} — tutorial {e.tutorialSession.label}: {fmtSession(e.tutorialSession)} —{" "}
-                  {e.tutorialSession.location}
-                </li>
-              ))}
-            </ul>
-          )
-        }
+        <p id="confirmed-empty-note" hidden={confirmed.length > 0}>
+          You don't have a confirmed enrolment yet.
+        </p>
+        <ul id="confirmed-list" hidden={confirmed.length === 0}>
+          {
+            confirmed.map((e) => (
+              <li data-course-id={e.courseId}>
+                <span class="course-code">{e.course.code}</span> — tutorial {e.tutorialSession.label}:{" "}
+                {fmtSession(e.tutorialSession)} — {e.tutorialSession.location}
+              </li>
+            ))
+          }
+        </ul>
       </section>
     </main>
     <script type="application/json" id="planner-data" set:html={plannerDataJson} />
@@ -303,11 +340,14 @@ const plannerDataJson = JSON.stringify({
         softPreferences: { minimizeDaysOnCampus: boolean; avoidDays: number[] };
       };
 
+      type EnrollmentChoice = { courseId: number; tutorialSessionId: number };
+
       const dataEl = document.getElementById("planner-data");
       const data = JSON.parse(dataEl?.textContent ?? "{}") as {
         courses: CourseRow[];
         candidates: { courseId: number; required: boolean }[];
         preferences: PreferencesState;
+        confirmed: EnrollmentChoice[];
       };
 
       const courses: CourseRow[] = data.courses ?? [];
@@ -394,6 +434,13 @@ const plannerDataJson = JSON.stringify({
       }
       savePreviewToStorage();
 
+      // Server-persisted confirmed enrolment (PLAN.md's third state). Starts
+      // from what the server rendered this page with, then is only ever
+      // replaced wholesale (on a successful confirm) or trimmed by one
+      // course (on a successful withdraw) — a failed request leaves it, and
+      // therefore what's shown, exactly as it was.
+      let confirmedState: EnrollmentChoice[] = [...(data.confirmed ?? [])];
+
       const scheduleListEl = document.getElementById("candidate-schedule-list")!;
       const conflictBannersEl = document.getElementById("conflict-banners")!;
       const previewEmptyNote = document.getElementById("preview-empty-note")!;
@@ -420,6 +467,18 @@ const plannerDataJson = JSON.stringify({
       const planDetailGridEl = document.getElementById("plan-detail-grid")!;
       const planDetailDayTabsEl = document.getElementById("plan-detail-day-tabs")!;
       const planDetailSessionDetailEl = document.getElementById("plan-detail-session-detail")!;
+
+      const confirmBlockedNoteEl = document.getElementById("confirm-blocked-note")!;
+      const confirmEnrolmentBtn = document.getElementById("confirm-enrolment-btn") as HTMLButtonElement;
+      const confirmStatusEl = document.getElementById("confirm-status")!;
+      const confirmDialogEl = document.getElementById("confirm-dialog")!;
+      const confirmDialogDiffEl = document.getElementById("confirm-dialog-diff")!;
+      const confirmDialogErrorEl = document.getElementById("confirm-dialog-error")!;
+      const confirmDialogConfirmBtn = document.getElementById("confirm-dialog-confirm") as HTMLButtonElement;
+      const confirmDialogCancelBtn = document.getElementById("confirm-dialog-cancel") as HTMLButtonElement;
+
+      const confirmedEmptyNoteEl = document.getElementById("confirmed-empty-note")!;
+      const confirmedListEl = document.getElementById("confirmed-list")!;
 
       type PreviewSlot = { courseId: number; label: string; session: KindedSlot; location: string; pending: boolean };
 
@@ -603,8 +662,11 @@ const plannerDataJson = JSON.stringify({
           .join("");
       }
 
-      function renderConflictBanners() {
-        const slots = allPreviewSlots();
+      // Shared by renderConflictBanners and the confirm-blocking check below,
+      // so "does this preview have a tutorial-vs-tutorial clash" is computed
+      // one way, not two — a lecture-involving overlap is always
+      // "lecture-note" (never blocking), per classifyOverlap.
+      function computePreviewOverlaps(slots: PreviewSlot[]) {
         const tutorialClashPairs: [string, string][] = [];
         const lectureNotePairs: [string, string][] = [];
         for (let i = 0; i < slots.length; i++) {
@@ -614,6 +676,12 @@ const plannerDataJson = JSON.stringify({
             else if (cls === "lecture-note") lectureNotePairs.push([slots[i].label, slots[j].label]);
           }
         }
+        return { tutorialClashPairs, lectureNotePairs };
+      }
+
+      function renderConflictBanners() {
+        const slots = allPreviewSlots();
+        const { tutorialClashPairs, lectureNotePairs } = computePreviewOverlaps(slots);
         const parts: string[] = [];
         for (const [a, b] of tutorialClashPairs) {
           parts.push(`<p class="conflict-note">Tutorial clash in your current preview: "${esc(a)}" overlaps with "${esc(b)}". Change one of these two tutorial times to clear it.</p>`);
@@ -813,8 +881,201 @@ const plannerDataJson = JSON.stringify({
         renderScheduleList();
         renderConflictBanners();
         renderWeeklyGrid();
+        renderConfirmBlockedNote();
         savePreviewToStorage();
       }
+
+      // --- Phase 5: confirm / view / withdraw confirmed enrolment --------
+
+      // Turns a courseId + tutorialSessionId pair into a human-readable line
+      // for diffs and dialogs. Looks the session up in `courseById`, which is
+      // built from the *whole* course catalogue (not just candidates), so
+      // this still resolves correctly for a confirmed course that's since
+      // been removed as a candidate.
+      function describeChoice(courseId: number, tutorialSessionId: number | null): string {
+        const course = courseById.get(courseId);
+        if (!course) return `Course ${courseId} (no longer exists)`;
+        if (tutorialSessionId == null) return `${course.code} (no tutorial time chosen)`;
+        const session = course.sessions.find((s) => s.id === tutorialSessionId);
+        if (!session) return `${course.code} (that tutorial section no longer exists)`;
+        return `${course.code} — ${session.label}: ${DAY_ABBR[session.dayOfWeek]} ${fmtTime(session.startMinutes)}–${fmtTime(session.endMinutes)} (${session.location})`;
+      }
+
+      type ConfirmPlanResult = { ok: true; choices: EnrollmentChoice[] } | { ok: false; reason: string };
+
+      // Everything that must hold before the current preview is even
+      // eligible to submit as a confirm — mirrors the backend's own checks
+      // (empty, >4 courses, tutorial-vs-tutorial clash) plus the two things
+      // only the client can see before submitting (a course with no time
+      // chosen yet, or a chosen time whose room/section is still pending).
+      // Never checks the 3/4 desired-count preference — that's mode-B-only
+      // (CLAUDE.md), not a manual-preview restriction.
+      function computeConfirmPlan(): ConfirmPlanResult {
+        const entries = [...preview.entries()];
+        if (entries.length === 0) {
+          return { ok: false, reason: "Your preview is empty — add a candidate and choose a tutorial time before confirming." };
+        }
+        const noTime = entries.filter(([, e]) => e.dayOfWeek == null);
+        if (noTime.length > 0) {
+          const codes = noTime.map(([courseId]) => courseById.get(courseId)?.code ?? String(courseId)).join(", ");
+          return { ok: false, reason: `Choose a tutorial time for: ${codes}.` };
+        }
+        const pending = entries.filter(([, e]) => e.sessionId == null);
+        if (pending.length > 0) {
+          const codes = pending.map(([courseId]) => courseById.get(courseId)?.code ?? String(courseId)).join(", ");
+          return { ok: false, reason: `Choose a specific room/section for: ${codes} — that time is offered in more than one room.` };
+        }
+        if (entries.length > 4) {
+          return { ok: false, reason: `A confirmed enrolment can have at most 4 courses; your preview currently has ${entries.length}.` };
+        }
+        const { tutorialClashPairs } = computePreviewOverlaps(allPreviewSlots());
+        if (tutorialClashPairs.length > 0) {
+          const [a, b] = tutorialClashPairs[0];
+          return { ok: false, reason: `Tutorial clash: "${a}" overlaps with "${b}". Change one of these two tutorial times before confirming.` };
+        }
+        return { ok: true, choices: entries.map(([courseId, e]) => ({ courseId, tutorialSessionId: e.sessionId! })) };
+      }
+
+      function renderConfirmBlockedNote() {
+        const result = computeConfirmPlan();
+        confirmEnrolmentBtn.disabled = !result.ok;
+        confirmBlockedNoteEl.hidden = result.ok;
+        confirmBlockedNoteEl.textContent = result.ok ? "" : result.reason;
+      }
+
+      type DiffKind = "added" | "removed" | "changed" | "unchanged";
+      type ConfirmDiffRow = { courseId: number; kind: DiffKind; before?: EnrollmentChoice; after?: EnrollmentChoice };
+
+      // Compares the plan the preview would submit against `confirmedState`
+      // (this client's mirror of what's actually saved) so the confirm
+      // dialog can show exactly what's about to change, per-course, before
+      // the write happens.
+      function computeConfirmDiff(nextChoices: EnrollmentChoice[]): ConfirmDiffRow[] {
+        const before = new Map(confirmedState.map((c) => [c.courseId, c]));
+        const after = new Map(nextChoices.map((c) => [c.courseId, c]));
+        const courseIds = new Set([...before.keys(), ...after.keys()]);
+        const rows: ConfirmDiffRow[] = [];
+        for (const courseId of courseIds) {
+          const b = before.get(courseId);
+          const a = after.get(courseId);
+          if (b && !a) rows.push({ courseId, kind: "removed", before: b });
+          else if (!b && a) rows.push({ courseId, kind: "added", after: a });
+          else if (b && a && b.tutorialSessionId !== a.tutorialSessionId) rows.push({ courseId, kind: "changed", before: b, after: a });
+          else if (b && a) rows.push({ courseId, kind: "unchanged", before: b, after: a });
+        }
+        const order: Record<DiffKind, number> = { added: 0, changed: 1, removed: 2, unchanged: 3 };
+        rows.sort(
+          (x, y) =>
+            order[x.kind] - order[y.kind] ||
+            (courseById.get(x.courseId)?.code ?? "").localeCompare(courseById.get(y.courseId)?.code ?? ""),
+        );
+        return rows;
+      }
+
+      function renderConfirmDiffInto(el: HTMLElement, rows: ConfirmDiffRow[]) {
+        if (rows.length === 0) {
+          el.innerHTML = "<p>Nothing to confirm — your preview matches your confirmed enrolment exactly.</p>";
+          return;
+        }
+        const groups: Record<DiffKind, ConfirmDiffRow[]> = { added: [], changed: [], removed: [], unchanged: [] };
+        for (const row of rows) groups[row.kind].push(row);
+        const section = (label: string, kind: DiffKind, render: (row: ConfirmDiffRow) => string) =>
+          groups[kind].length === 0
+            ? ""
+            : `<div class="diff-group diff-${kind}"><h4>${esc(label)}</h4><ul>${groups[kind].map((row) => `<li>${render(row)}</li>`).join("")}</ul></div>`;
+        el.innerHTML = [
+          section("Adding", "added", (row) => esc(describeChoice(row.courseId, row.after!.tutorialSessionId))),
+          section(
+            "Changing",
+            "changed",
+            (row) =>
+              `${esc(describeChoice(row.courseId, row.before!.tutorialSessionId))} → ${esc(describeChoice(row.courseId, row.after!.tutorialSessionId))}`,
+          ),
+          section("Removing (withdrawing)", "removed", (row) => esc(describeChoice(row.courseId, row.before!.tutorialSessionId))),
+          section("Unchanged", "unchanged", (row) => esc(describeChoice(row.courseId, row.after!.tutorialSessionId))),
+        ].join("");
+      }
+
+      // Renders the saved, server-truth confirmed enrolment from
+      // `confirmedState` alone — never from `preview` — so this list can
+      // never accidentally reflect an unconfirmed edit. Session details are
+      // looked up in `courseById` (the whole catalogue), which is what lets a
+      // confirmed course that's no longer a candidate still display
+      // correctly instead of vanishing.
+      function renderConfirmedList() {
+        confirmedEmptyNoteEl.hidden = confirmedState.length > 0;
+        confirmedListEl.hidden = confirmedState.length === 0;
+        const sorted = [...confirmedState].sort((a, b) =>
+          (courseById.get(a.courseId)?.code ?? "").localeCompare(courseById.get(b.courseId)?.code ?? ""),
+        );
+        confirmedListEl.innerHTML = sorted
+          .map((c) => {
+            const course = courseById.get(c.courseId);
+            const code = course?.code ?? `Course ${c.courseId}`;
+            const session = course?.sessions.find((s) => s.id === c.tutorialSessionId);
+            const timeHtml = session
+              ? `${esc(session.label)}: ${DAY_ABBR[session.dayOfWeek]} ${fmtTime(session.startMinutes)}–${fmtTime(session.endMinutes)} — ${esc(session.location)}`
+              : '<span class="conflict-note">that tutorial section no longer exists</span>';
+            return `<li data-course-id="${c.courseId}">
+              <span class="course-code">${esc(code)}</span> — ${timeHtml}
+            </li>`;
+          })
+          .join("");
+      }
+
+      let confirmInFlight = false;
+
+      confirmEnrolmentBtn.addEventListener("click", () => {
+        const result = computeConfirmPlan();
+        if (!result.ok) return; // button is disabled in this case; belt-and-braces guard
+        renderConfirmDiffInto(confirmDialogDiffEl, computeConfirmDiff(result.choices));
+        confirmDialogErrorEl.hidden = true;
+        confirmDialogErrorEl.textContent = "";
+        confirmDialogEl.hidden = false;
+      });
+
+      confirmDialogCancelBtn.addEventListener("click", () => {
+        confirmDialogEl.hidden = true;
+      });
+
+      confirmDialogConfirmBtn.addEventListener("click", async () => {
+        if (confirmInFlight) return;
+        const result = computeConfirmPlan();
+        if (!result.ok) {
+          confirmDialogErrorEl.textContent = result.reason;
+          confirmDialogErrorEl.hidden = false;
+          return;
+        }
+        confirmInFlight = true;
+        confirmDialogConfirmBtn.disabled = true;
+        try {
+          const res = await fetch("/api/enrollment", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ choices: result.choices }),
+          });
+          if (!res.ok) {
+            const body = (await res.json().catch(() => null)) as { error?: string } | null;
+            confirmDialogErrorEl.textContent = body?.error ?? `Confirm failed (${res.status}).`;
+            confirmDialogErrorEl.hidden = false;
+            return;
+          }
+          // Only on a confirmed success does confirmedState move — a failed
+          // request above returns before this line, leaving confirmedState
+          // (and the preview, which this handler never touches either way)
+          // exactly as they were.
+          confirmedState = result.choices;
+          confirmDialogEl.hidden = true;
+          confirmStatusEl.textContent = "Enrolment confirmed.";
+          renderConfirmedList();
+        } catch {
+          confirmDialogErrorEl.textContent = "Confirm failed — check your connection and try again.";
+          confirmDialogErrorEl.hidden = false;
+        } finally {
+          confirmInFlight = false;
+          confirmDialogConfirmBtn.disabled = false;
+        }
+      });
 
       // --- Phase 4: auto-schedule (optional) -----------------------------
 
@@ -1231,6 +1492,7 @@ const plannerDataJson = JSON.stringify({
       // starts consistent with what was already server-rendered before any
       // interaction happens.
       renderAll();
+      renderConfirmedList();
     </script>
   </body>
 </html>
