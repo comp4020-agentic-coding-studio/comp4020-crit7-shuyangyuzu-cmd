@@ -581,3 +581,144 @@ Deliberately out of scope this round, per my instruction: candidate data,
 tutorial/room selection logic, conflict-detection rules, and confirmed-
 enrolment data are all unchanged — only layout and the new client-only
 expand/collapse state moved.
+
+### Phase 4 — the optional auto-scheduler
+
+With layout settled for now, I moved to phase 4: an optional auto-scheduler,
+still not the final confirm/withdraw UI (that stays phase 5). I gave the
+agent a detailed, single instruction up front covering every rule I wanted
+enforced, rather than letting it improvise the contract as it went: two
+separate, explicitly user-triggered modes (fill in tutorial times for
+exactly the courses already in the current preview, with no 3/4-course
+limit; or generate a whole plan from the candidate pool, aiming for a count
+of 3 or 4 I set, always keeping courses I've marked required); the existing
+hard-blackout/soft-avoid-days/soft-minimize-days-on-campus preferences,
+persisted server-side and restored after a reload; tutorial-vs-tutorial as
+the only blocking conflict with lectures never blocking and adjacency never
+blocking, carrying forward the rule I'd corrected earlier in phase 3; a
+fixed soft-preference ranking order with a stable tie-break; same-timeslot,
+multiple-room tutorials collapsed into one time option that is never
+silently resolved to a section on the visitor's behalf; an exhaustive (not
+sampled) search at this dataset's small scale, with an accurate true count,
+a top-50 cap, and 10-per-page display, both facts disclosed explicitly;
+honest, specific failure messages rather than an invented reason when I
+can't pin one down; server-side validation of every input on the
+generate endpoint independent of anything the page itself already checked;
+and a hard rule that the generate endpoint may only ever read — never write
+confirmed enrolment, candidates, or anything else already saved.
+
+I asked for the algorithm, the API, and the UI as separate commits, each
+checked before it was committed, and for this file updated at the end with
+an honest account of what was and wasn't verified — including saying so
+plainly if browser/viewport checking wasn't actually done, which by this
+point in the build is a standing limitation of the environment, not a new
+one.
+
+**Algorithm.** `src/lib/generator.ts` is a pure module with no I/O: given a
+course list, a preferences object, and either a fixed course-id set
+(operation A) or a required/optional candidate split plus a target count
+(operation B), it enumerates every tutorial-time combination, checks each
+against `classifyOverlap` for tutorial-vs-tutorial clashes only, and ranks
+what's left by the fixed order I asked for (avoid-day tutorial-minutes,
+then days-on-campus, then a stable course-code-and-time tie-break — each
+comparison skipped entirely when its preference isn't enabled, so an
+unused preference genuinely has no effect on ordering rather than acting as
+a silent zero). A same-timeslot multi-section option is represented as one
+combination entry with `sectionId: null, pending: true` when it has more
+than one section, and only auto-resolved to a concrete `sectionId` when
+there is exactly one — never picking the first one arbitrarily. The agent
+wrote `spec/generator.test.ts` alongside it, covering: both modes' course-
+set rules; the required-course and 3/4-count constraint for operation B;
+tutorial clashes blocking a combination while adjacency and lecture overlap
+never do; blackout days always excluding a plan while avoid-days/minimize-
+days only reorder; the multi-section dedup and pending behaviour; the
+no-feasible-plan case; an exact total count alongside the top-50 cap; and
+that the ranking is stable when preferences don't distinguish two plans.
+
+**API.** `POST /api/plans/generate` (`src/pages/api/plans/generate.ts`)
+reads courses, candidates, and preferences straight from the database on
+every call and hands them to the pure generator — it never trusts a
+preferences object or a candidate list from the request body, only a
+`mode` and, for mode `"preview"`, a `courseIds` array that is independently
+checked against the real, current candidate list (a ghost or fabricated
+course id in that array is rejected with a 400, not silently ignored or
+trusted). Nothing in this route can write anywhere: I checked myself that
+`listCourses`, `listCandidates`, and `getPreferences` are all read-only
+functions, and that no `db.transaction`/insert/update call exists anywhere
+in the file. `spec/plans-generate.test.ts` exercises this at the HTTP
+level — malformed input, an untrusted course id, an empty preview, a
+single fixed course not being limited by the 3/4 rule, the multi-section
+pending case, both of a course's real tutorial options being found with an
+exact count, two courses combining without a clash, and — for operation B,
+where hand-coding the expected result against a shared, multi-file candidate
+table would be fragile — a check that the route's JSON response matches
+exactly what the same pure `generatePlansFromCandidates` function computes
+directly from the same live data the test itself just read. Both modes are
+also checked to leave confirmed enrolment and the candidate list completely
+untouched before and after a call.
+
+**UI.** `/planner/` gained a new "Auto-schedule (optional)" section below
+the existing manual scheduler, which I was explicit had to stay fully
+functional and untouched on its own. It has: a conditions panel (blackout
+days, avoid days, minimize-days-on-campus, and the 3/4 target), saved to
+the server on every change and restored from it on load; the two trigger
+buttons, neither of which runs automatically or touches the manual preview
+by itself; a results list showing the true total, an explicit note when
+the list shown is the capped top 50, and per-plan course/time/days-on-
+campus/pending-section summaries, paginated 10 at a time; a read-only
+weekly-schedule view for one result that doesn't touch the preview; and an
+"Apply to current preview" action that is the only thing that ever
+replaces it — cancelling the results view leaves the manual preview
+exactly as it was.
+
+Two design calls I made, or confirmed, while this was being built, since my
+original instruction left the exact mechanism open:
+
+- **Staleness.** Rather than hunting down and flagging every place a
+  candidate, a required flag, a preference, or (for operation A) the
+  preview's own course set could change, the agent computes a snapshot key
+  from all of those at generate time and again at render/apply time — a
+  mismatch marks the result stale, disables every "Apply" button, and says
+  why, without needing a manually-maintained list of invalidation sites. I
+  reviewed this approach and think it's the right shape for a prototype at
+  this scale: it can't miss a mutation path the way scattered manual flags
+  could.
+- **Plan detail view.** Rather than reusing or duplicating the pixel-
+  precise weekly grid for a second surface, a generated plan's schedule is
+  shown as a simple day-grouped list. I agreed with the agent's reasoning
+  for this: there's no browser-automation tool available this round either,
+  so a second from-scratch rendering surface would be exactly the kind of
+  thing that could carry a layout bug nobody actually looks at before I do.
+
+`spec/planner.test.ts` gained structural coverage of this page's own
+server-rendered markup for the new section: the hard/soft explanation
+text, both trigger buttons present, the results section and plan-detail
+modal starting hidden before any script runs, and that saved conditions
+actually come back checked after a reload (restoring whatever preferences
+existed before that test ran, so it doesn't leave the shared preferences
+table changed for any other spec file).
+
+Verification the agent ran before each of the three commits below: `pnpm
+typecheck` (0 errors, the same 2 pre-existing `is:inline` hints on the raw
+JSON data-island scripts as every prior round) and `pnpm test` (`astro
+build` plus the full vitest run). The final run, after all three pieces
+were in place, was 15 spec files, 179 tests, all passing.
+
+Commits for this phase:
+- [`a617624`](https://github.com/comp4020-agentic-coding-studio/comp4020-crit7-shuyangyuzu-cmd/commit/a617624) — the pure generation algorithm and its unit tests
+- [`de49743`](https://github.com/comp4020-agentic-coding-studio/comp4020-crit7-shuyangyuzu-cmd/commit/de49743) — the auto-schedule API route and preferences-aware HTTP tests
+- [`82ffcc9`](https://github.com/comp4020-agentic-coding-studio/comp4020-crit7-shuyangyuzu-cmd/commit/82ffcc9) — the planner UI (conditions panel, both triggers, results/pagination/apply, staleness) and its structural tests
+
+What I still have not had verified, and am not claiming: there is still no
+browser-automation tool available in this environment, so nobody — agent
+or me — has actually looked at this new section rendered in a browser yet.
+The generate/apply/pagination/view-detail interaction is only verified at
+the HTTP/API level and by the structural markup checks above; I still need
+to open the dev server myself, click through both auto-schedule modes on
+real data, and look at the result at both 1920×1080 and 390×844 before I'd
+call this phase's UI actually checked, the same standing gap as every prior
+UI round in this build.
+
+Deliberately out of scope this phase, per my instruction: the final
+confirm/withdraw UI is still phase 5 and untouched; nothing was pushed to
+`origin` or deployed.
