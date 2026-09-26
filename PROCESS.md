@@ -329,3 +329,123 @@ Commits for this round:
 Deliberately out of scope this round, per my instruction: auto-generating
 plan combinations and the final confirm/withdraw UI (still phase 4), and
 pushing to `origin` or deploying anything.
+
+### Phase 3 revision — a time-proportional weekly grid
+
+The stacked, course-order weekly grid from the page split above still
+didn't look like a real timetable: every block was the same height
+regardless of how long the session actually was, and idle time between
+sessions just wasn't there. I asked the agent to rebuild `/planner/`'s grid
+specifically to match how ANU's own MyTimetable lays a week out — a fixed
+08:00–22:00 axis shared by all seven days, blocks positioned and sized by
+actual clock time, overlapping sessions placed in side-by-side columns
+instead of covering each other, and a single-day view with day-switching on
+narrow screens instead of squeezing seven columns into a phone width. I was
+explicit that this round is a pure display change: nothing about the
+candidate list, the preview, or the confirmed enrolment was to move.
+
+I gave the agent eleven specific requirements (fixed axis and shared time
+scale, hour/half-hour gridlines, position-and-height-from-time rather than
+stacking order, no compressing idle time, no shrinking blocks to fit a
+screen with ~64px/hour as a starting point and a scrollable grid body under
+a sticky day-header row, the time axis and grid taking the main width with
+the candidate/tutorial controls staying compact on the left, side-by-side
+columns for genuinely overlapping sessions without splitting merely-adjacent
+ones, keeping the existing lecture-never-blocks/tutorial-clash-only rule,
+compact block text — course code, lecture/tutorial, start–end time — with
+section/room detail moved to a click-triggered panel instead of inflating
+block height, a single-day mobile view, and an explicit warning rather than
+silent hiding for any session outside 08:00–22:00), plus three edge cases to
+specifically check: a 09:30-start/90-minute session, two overlapping
+sessions, and two sessions exactly back-to-back.
+
+The agent added two pure functions to `src/lib/scheduling.ts` next to the
+existing overlap/grouping logic, rather than computing positions inline in
+the page's script: `computeGridPosition(start, end)`, which turns a
+session's start/end minutes into a top/height in pixels against the fixed
+axis (and reports `"out-of-range"` for a session entirely outside it, or
+flags `clippedStart`/`clippedEnd` for one only partly outside it, instead of
+silently drawing something misleading), and `packOverlappingSlots(slots)`,
+which sorts a day's sessions by start time, groups them into clusters of
+*transitively* overlapping sessions, and assigns each a column by greedy
+first-fit within its cluster — the standard optimal algorithm for this kind
+of interval layout. Two sessions that are exactly back-to-back start a new
+cluster rather than sharing one, so they each keep the full column width
+instead of being split side by side, matching the "adjacent isn't a
+conflict" rule this file already established.
+
+I asked specifically for the 09:30/90-minute case to be checked: with the
+grid starting at 08:00 and 64px per hour, 09:30 is 90 minutes past the axis
+start, so it should sit 96px down and stand 96px tall (90 minutes at 64px/
+60min ≈ 96px each way). The agent added this as a named unit test in
+`spec/scheduling.test.ts` asserting exactly `{ topPx: 96, heightPx: 96 }` for
+`computeGridPosition(570, 660)`, alongside separate tests for: a session
+starting exactly at the axis start; a session fully before and one fully
+after the window (both `"out-of-range"`); a session clipped at the start of
+the window and one clipped at the end (each flagged, position/height
+clamped to the visible portion); two overlapping sessions getting two
+separate columns; two back-to-back sessions staying in one full-width
+column; three mutually-overlapping sessions getting three columns in one
+cluster; and a case where a session's column is freed and reused once its
+occupant has ended within an otherwise-connected cluster. All of these are
+tests of the pure functions directly, not of rendered HTML, since that's
+where this kind of position/column arithmetic is actually easy to get wrong
+and easy to check without a browser.
+
+`/planner/`'s markup was rebuilt around this: a sticky weekday header row, a
+scrollable grid body with a shared time axis and seven day columns (each
+carrying hour/half-hour gridlines sized off one shared CSS custom property
+so the lines can't drift out of sync with the block math), absolutely-
+positioned `<button>` session blocks whose inline `top`/`height`/`left`/
+`width` come straight from the two functions above, a single shared
+`#session-detail` panel that a block click populates with its full label,
+kind, time range, location, and status (rather than a popover per block,
+which would risk the block itself growing to fit more text), a day-tabs row
+that only appears under the existing 640px breakpoint and toggles a
+`mobile-active` class on one day at a time, and an `#out-of-range-warning`
+banner that lists any session `computeGridPosition` reports as out-of-range
+or clipped, in plain text, rather than only showing what fits. Today's
+weekday is used as the initial mobile day server-side (`new Date().getDay()`
+adjusted to this codebase's Monday-first convention), so the page opens on
+a sensible day before any client script has run. None of `allPreviewSlots`,
+`lockedSlotsExcept`, the sessionStorage load/save/reconcile logic, or the
+`change` handler that drives adding/removing a candidate from the preview
+and choosing a tutorial time or room changed in this round — the rewrite
+only touches how the same preview data already computed there gets drawn.
+
+Verification the agent ran before this round's commit: `pnpm typecheck`
+(0 errors — the same 2 pre-existing `is:inline` hints as every prior round,
+unrelated to this change) and `pnpm test` (`astro build` plus the full
+vitest run — 13 spec files, 136 tests, all passing, including the new
+grid-position and column-packing tests above). It also started the dev
+server and used `curl` against the running `/planner/` page to confirm,
+read-only, that the server-rendered HTML actually carries the numbers this
+round depends on: a `--grid-height: 896px` and `--hour-px: 64px` custom
+property, fifteen hour labels from 08:00 to 22:00 each exactly 64px apart,
+exactly one day column and one day-tab marked `mobile-active` server-side,
+and that the compiled client script for the page actually calls
+`computeGridPosition`/`packOverlappingSlots` and wires up the new
+`day-tab`/`session-detail` elements. None of this touched the candidate
+list, the preview, or the confirmed enrolment — it was read-only against
+whatever was already there.
+
+What I still have not had verified, and am not claiming: nobody has looked
+at this grid rendered in an actual browser yet. There is still no
+browser-automation tool available to the agent in this environment, and I
+had explicitly told it not to claim the 1920×1080/390×844 viewport check is
+done unless it's actually looked at real rendering — it hasn't, so it
+isn't, no matter how consistent the server-rendered numbers and the
+compiled script look from the outside. The dev server is running for me to
+open myself at both sizes before I call this done — in particular I still
+need to actually see: whether the sticky header genuinely stays put while
+scrolling a full day, whether overlapping blocks read cleanly side by side
+at real block widths, whether the mobile day-switcher is comfortable to use
+with a thumb, and whether the compact block text is legible at ~64px/hour
+rather than just non-overflowing.
+
+Commit for this round:
+- [`8e38268`](https://github.com/comp4020-agentic-coding-studio/comp4020-crit7-shuyangyuzu-cmd/commit/8e38268) — the time-proportional weekly grid rewrite (scheduling.ts helpers, planner.astro, styles.css) and its unit tests
+
+Deliberately out of scope this round, per my instruction: phase 4's
+auto-generation is still untouched, and no candidate, preview, or confirmed-
+enrolment behaviour changed — this was a rendering-only revision.
