@@ -13,13 +13,14 @@
 // script), reconciled on load against whichever courses are still actual
 // candidates — so removing a candidate on /courses/ can never leave a ghost
 // entry in a stale preview.
-import { listCandidates, listConfirmedEnrollments, listCourses } from "../lib/db";
+import { getPreferences, listCandidates, listConfirmedEnrollments, listCourses } from "../lib/db";
 import { GRID_END_MINUTES, GRID_START_MINUTES, PX_PER_HOUR } from "../lib/scheduling";
 import "../styles.css";
 
 const courses = listCourses();
 const candidates = listCandidates();
 const confirmed = listConfirmedEnrollments();
+const preferences = getPreferences();
 
 const DAY_NAMES = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
 const DAY_ABBR = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
@@ -55,6 +56,7 @@ function fmtSession(s: { dayOfWeek: number; startMinutes: number; endMinutes: nu
 const plannerDataJson = JSON.stringify({
   courses,
   candidates: candidates.map((c) => ({ courseId: c.courseId, required: c.required === 1 })),
+  preferences,
 }).replace(/</g, "\\u003c");
 ---
 
@@ -180,6 +182,119 @@ const plannerDataJson = JSON.stringify({
         </div>
       </section>
 
+      <section aria-labelledby="autoschedule-heading" class="autoschedule">
+        <h2 id="autoschedule-heading">Auto-schedule (optional)</h2>
+        <p>
+          Manual scheduling above always works on its own — everything here is an optional helper
+          that searches for you and only ever changes your preview when you explicitly click
+          "Apply to current preview" below. Nothing here touches your confirmed enrolment.
+        </p>
+
+        <fieldset id="preferences-panel" class="preferences-panel">
+          <legend>Conditions and preferences</legend>
+          <p class="preferences-note">
+            These are saved for you and restored if you reload this page. <strong>Days you can't
+            attend</strong> are a hard rule — a plan that puts a tutorial there is never offered.
+            The other two are soft: they only change which plans are shown first, and are only
+            applied when you've actually set them (an empty avoid-days list, or the checkbox left
+            off, has no effect on ordering). All three — and the "days on campus" count shown on
+            each result — count <strong>tutorials only</strong>. A lecture never counts as a day
+            on campus and is never blocked by a blackout or avoid day, since a lecture here can
+            always be caught up on as a recording.
+          </p>
+
+          <fieldset class="day-checkbox-group">
+            <legend>Days I can't attend (hard)</legend>
+            {
+              DAY_NAMES.map((name, day) => (
+                <label class="day-checkbox">
+                  <input
+                    type="checkbox"
+                    class="blackout-day-checkbox"
+                    data-day={day}
+                    checked={preferences.blackoutDays.includes(day)}
+                  />
+                  {DAY_ABBR[day]}
+                  <span class="sr-only">{name}</span>
+                </label>
+              ))
+            }
+          </fieldset>
+
+          <fieldset class="day-checkbox-group">
+            <legend>Days to avoid if possible (soft)</legend>
+            {
+              DAY_NAMES.map((name, day) => (
+                <label class="day-checkbox">
+                  <input
+                    type="checkbox"
+                    class="avoid-day-checkbox"
+                    data-day={day}
+                    checked={preferences.softPreferences.avoidDays.includes(day)}
+                  />
+                  {DAY_ABBR[day]}
+                  <span class="sr-only">{name}</span>
+                </label>
+              ))
+            }
+          </fieldset>
+
+          <label class="minimize-days-toggle">
+            <input
+              type="checkbox"
+              id="minimize-days-checkbox"
+              checked={preferences.softPreferences.minimizeDaysOnCampus}
+            />
+            Prefer fewer days on campus (soft)
+          </label>
+
+          <fieldset class="desired-count-group">
+            <legend>When generating a plan from candidates, aim for</legend>
+            <label>
+              <input type="radio" name="desired-count" value="3" checked={preferences.desiredCourseCount === 3} />
+              3 courses
+            </label>
+            <label>
+              <input type="radio" name="desired-count" value="4" checked={preferences.desiredCourseCount === 4} />
+              4 courses
+            </label>
+          </fieldset>
+
+          <p id="preferences-status" role="status" aria-live="polite"></p>
+        </fieldset>
+
+        <div class="autoschedule-triggers">
+          <button type="button" id="generate-preview-times-btn">
+            Auto-schedule tutorial times for my current preview
+          </button>
+          <p class="trigger-note">
+            Keeps exactly the courses currently in your preview and only searches tutorial times —
+            not limited to 3 or 4 courses. Won't overwrite your preview until you apply a result.
+          </p>
+          <button type="button" id="generate-from-candidates-btn">
+            Generate a plan from my candidates
+          </button>
+          <p class="trigger-note">
+            Aims for the course count set above, always including candidates you've marked
+            required, and fills any remaining slots from your other candidates.
+          </p>
+        </div>
+
+        <section id="generate-results" class="generate-results" hidden aria-labelledby="generate-results-heading">
+          <h3 id="generate-results-heading"></h3>
+          <p id="generate-results-summary"></p>
+          <div id="generate-results-body"></div>
+          <div id="generate-results-pagination" class="generate-results-pagination"></div>
+          <button type="button" id="generate-results-cancel">Cancel</button>
+        </section>
+
+        <div id="plan-detail-modal" class="plan-detail-modal" role="dialog" aria-label="Plan weekly schedule" hidden>
+          <button type="button" id="plan-detail-close" class="session-detail-close" aria-label="Close">×</button>
+          <h4>Weekly schedule for this plan</h4>
+          <div id="plan-detail-content"></div>
+        </div>
+      </section>
+
       <section aria-labelledby="confirmed-heading">
         <h2 id="confirmed-heading">Your confirmed enrolment</h2>
         <p>
@@ -222,10 +337,17 @@ const plannerDataJson = JSON.stringify({
       const fmtTime = (m: number) => `${pad(Math.floor(m / 60))}:${pad(m % 60)}`;
       const esc = (s: string) => s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
 
+      type PreferencesState = {
+        desiredCourseCount: number;
+        blackoutDays: number[];
+        softPreferences: { minimizeDaysOnCampus: boolean; avoidDays: number[] };
+      };
+
       const dataEl = document.getElementById("planner-data");
       const data = JSON.parse(dataEl?.textContent ?? "{}") as {
         courses: CourseRow[];
         candidates: { courseId: number; required: boolean }[];
+        preferences: PreferencesState;
       };
 
       const courses: CourseRow[] = data.courses ?? [];
@@ -234,6 +356,19 @@ const plannerDataJson = JSON.stringify({
       // the persisted, server-truth state this page's left panel is built
       // from (this page never mutates it; that only happens on /courses/).
       const candidates = new Map<number, { required: boolean }>((data.candidates ?? []).map((c) => [c.courseId, { required: c.required }]));
+
+      // Server-persisted conditions/preferences (Phase 4) — restored on load
+      // from the same server-rendered data the checkboxes below start
+      // checked from, then kept in sync with whatever was last successfully
+      // saved via PUT /api/preferences. Used both to build the request body
+      // for auto-schedule mode "candidates" (indirectly — the server reads
+      // its own copy) and, client-side, as part of the "have the inputs to a
+      // past generate call changed since" staleness key.
+      let preferencesState: PreferencesState = data.preferences ?? {
+        desiredCourseCount: 3,
+        blackoutDays: [],
+        softPreferences: { minimizeDaysOnCampus: false, avoidDays: [] },
+      };
 
       // Client-only preview: courseId -> chosen time/room, or "in preview but
       // nothing chosen yet" (dayOfWeek === null). Never sent to the server,
@@ -306,6 +441,20 @@ const plannerDataJson = JSON.stringify({
       const outOfRangeWarningEl = document.getElementById("out-of-range-warning")!;
       const sessionDetailEl = document.getElementById("session-detail")!;
       const dayTabsEl = document.getElementById("day-tabs")!;
+
+      const preferencesPanelEl = document.getElementById("preferences-panel")!;
+      const preferencesStatusEl = document.getElementById("preferences-status")!;
+      const generatePreviewTimesBtn = document.getElementById("generate-preview-times-btn") as HTMLButtonElement;
+      const generateFromCandidatesBtn = document.getElementById("generate-from-candidates-btn") as HTMLButtonElement;
+      const generateResultsEl = document.getElementById("generate-results")!;
+      const generateResultsHeadingEl = document.getElementById("generate-results-heading")!;
+      const generateResultsSummaryEl = document.getElementById("generate-results-summary")!;
+      const generateResultsBodyEl = document.getElementById("generate-results-body")!;
+      const generateResultsPaginationEl = document.getElementById("generate-results-pagination")!;
+      const generateResultsCancelBtn = document.getElementById("generate-results-cancel") as HTMLButtonElement;
+      const planDetailModalEl = document.getElementById("plan-detail-modal")!;
+      const planDetailCloseBtn = document.getElementById("plan-detail-close") as HTMLButtonElement;
+      const planDetailContentEl = document.getElementById("plan-detail-content")!;
 
       type PreviewSlot = { courseId: number; label: string; session: KindedSlot; location: string; pending: boolean };
 
@@ -658,6 +807,336 @@ const plannerDataJson = JSON.stringify({
         renderWeeklyGrid();
         savePreviewToStorage();
       }
+
+      // --- Phase 4: auto-schedule (optional) -----------------------------
+
+      type GenPlanChoice = {
+        courseId: number;
+        code: string;
+        dayOfWeek: number;
+        startMinutes: number;
+        endMinutes: number;
+        sectionId: number | null;
+        pending: boolean;
+      };
+      type GenPlan = {
+        courses: GenPlanChoice[];
+        daysOnCampus: number[];
+        daysOnCampusCount: number;
+        avoidDayMinutes: number;
+        pendingCount: number;
+      };
+      type GenerateMode = "preview" | "candidates";
+      // The ephemeral, purely-computed "generated results" state (PLAN.md's
+      // fourth state, distinct from candidates/preview/confirmed) — never
+      // persisted anywhere, never survives a navigation or reload. `snapshotKey`
+      // records what candidates/required-flags/preferences (and, for mode
+      // "preview", which courses were in the preview) looked like at generate
+      // time, so a later change can be detected and the result marked stale
+      // without needing every mutation site to remember to flag it.
+      type GenerateResultState =
+        | { ok: true; mode: GenerateMode; totalFeasible: number; capped: boolean; plans: GenPlan[]; page: number; snapshotKey: string }
+        | { ok: false; mode: GenerateMode; reason: string }
+        | null;
+
+      let generateResult: GenerateResultState = null;
+      const RESULTS_PAGE_SIZE = 10;
+
+      function currentSnapshotKey(mode: GenerateMode): string {
+        const candidatesKey = [...candidates.entries()]
+          .sort((a, b) => a[0] - b[0])
+          .map(([id, c]) => `${id}:${c.required ? 1 : 0}`)
+          .join(",");
+        const prefsKey = JSON.stringify(preferencesState);
+        const previewKey = mode === "preview" ? [...preview.keys()].sort((a, b) => a - b).join(",") : "";
+        return `${candidatesKey}|${prefsKey}|${previewKey}`;
+      }
+
+      async function runGenerate(mode: GenerateMode) {
+        generatePreviewTimesBtn.disabled = true;
+        generateFromCandidatesBtn.disabled = true;
+        try {
+          const body: { mode: GenerateMode; courseIds?: number[] } = { mode };
+          if (mode === "preview") body.courseIds = [...preview.keys()];
+          const res = await fetch("/api/plans/generate", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify(body),
+          });
+          const json = await res.json();
+          if (!res.ok) {
+            generateResult = { ok: false, mode, reason: json.error ?? "Something went wrong generating a plan." };
+          } else if (!json.ok) {
+            generateResult = { ok: false, mode, reason: json.reason };
+          } else {
+            generateResult = {
+              ok: true,
+              mode,
+              totalFeasible: json.totalFeasible,
+              capped: json.capped,
+              plans: json.plans,
+              page: 0,
+              snapshotKey: currentSnapshotKey(mode),
+            };
+          }
+        } catch {
+          generateResult = { ok: false, mode, reason: "Couldn't reach the server to generate a plan." };
+        } finally {
+          generatePreviewTimesBtn.disabled = false;
+          generateFromCandidatesBtn.disabled = false;
+          renderGenerateResults();
+        }
+      }
+
+      function planToDetailSlots(plan: GenPlan): { label: string; session: KindedSlot; location: string; pending: boolean }[] {
+        const slots: { label: string; session: KindedSlot; location: string; pending: boolean }[] = [];
+        for (const choice of plan.courses) {
+          const course = courseById.get(choice.courseId);
+          if (!course) continue;
+          for (const lecture of course.sessions.filter((s) => s.kind === "lecture")) {
+            slots.push({
+              label: `${course.code} ${lecture.label}`,
+              session: { dayOfWeek: lecture.dayOfWeek, startMinutes: lecture.startMinutes, endMinutes: lecture.endMinutes, kind: "lecture" },
+              location: lecture.location,
+              pending: false,
+            });
+          }
+          const section = choice.sectionId != null ? course.sessions.find((s) => s.id === choice.sectionId) : undefined;
+          slots.push({
+            label: section ? `${course.code} ${section.label}` : `${course.code} tutorial (section pending)`,
+            session: { dayOfWeek: choice.dayOfWeek, startMinutes: choice.startMinutes, endMinutes: choice.endMinutes, kind: "tutorial" },
+            location: section ? section.location : "Section not yet chosen",
+            pending: choice.pending,
+          });
+        }
+        return slots;
+      }
+
+      function closePlanDetail() {
+        planDetailModalEl.hidden = true;
+        planDetailContentEl.innerHTML = "";
+      }
+
+      function renderPlanDetail(plan: GenPlan) {
+        const slots = planToDetailSlots(plan);
+        const byDay = new Map<number, typeof slots>();
+        for (const slot of slots) {
+          const list = byDay.get(slot.session.dayOfWeek) ?? [];
+          list.push(slot);
+          byDay.set(slot.session.dayOfWeek, list);
+        }
+        const html = DAY_NAMES.map((name, day) => {
+          const entries = byDay.get(day);
+          if (!entries || entries.length === 0) return "";
+          const sorted = [...entries].sort((a, b) => a.session.startMinutes - b.session.startMinutes);
+          const items = sorted
+            .map(
+              (s) =>
+                `<li class="${s.session.kind}${s.pending ? " pending" : ""}">${esc(s.label)} · ${fmtTime(s.session.startMinutes)}–${fmtTime(s.session.endMinutes)} · ${esc(s.location)}</li>`,
+            )
+            .join("");
+          return `<div class="plan-detail-day"><h4>${esc(name)}</h4><ul>${items}</ul></div>`;
+        }).join("");
+        planDetailContentEl.innerHTML = html || "<p>No sessions in this plan.</p>";
+        planDetailModalEl.hidden = false;
+      }
+
+      // Applying replaces whatever the affected preview entries currently
+      // are with this plan's choices — for mode "preview" that's the same
+      // course set (only times move), for mode "candidates" the whole
+      // preview becomes exactly this plan's course set. A pending (multi-
+      // section) choice keeps the preview's own already-chosen section only
+      // if that section belongs to this exact course *and* this exact
+      // day/start/end; otherwise it's left pending for the visitor to pick,
+      // never defaulted.
+      function applyGeneratedPlan(plan: GenPlan) {
+        const nextEntries = new Map<number, PreviewEntry>();
+        for (const choice of plan.courses) {
+          let sessionId: number | null = choice.pending ? null : choice.sectionId;
+          if (choice.pending) {
+            const old = preview.get(choice.courseId);
+            if (
+              old &&
+              old.dayOfWeek === choice.dayOfWeek &&
+              old.startMinutes === choice.startMinutes &&
+              old.endMinutes === choice.endMinutes &&
+              old.sessionId != null
+            ) {
+              sessionId = old.sessionId;
+            }
+          }
+          nextEntries.set(choice.courseId, {
+            dayOfWeek: choice.dayOfWeek,
+            startMinutes: choice.startMinutes,
+            endMinutes: choice.endMinutes,
+            sessionId,
+          });
+        }
+        preview.clear();
+        for (const [courseId, entry] of nextEntries) preview.set(courseId, entry);
+        expandedCourseId = null;
+        closePlanDetail();
+        renderAll();
+        renderGenerateResults();
+      }
+
+      function renderGenerateResults() {
+        if (!generateResult) {
+          generateResultsEl.hidden = true;
+          return;
+        }
+        generateResultsEl.hidden = false;
+        generateResultsHeadingEl.textContent =
+          generateResult.mode === "preview"
+            ? "Auto-scheduled tutorial times for your current preview"
+            : "Generated plans from your candidates";
+
+        if (!generateResult.ok) {
+          generateResultsSummaryEl.innerHTML = `<span class="conflict-note">${esc(generateResult.reason)}</span>`;
+          generateResultsBodyEl.innerHTML = "";
+          generateResultsPaginationEl.innerHTML = "";
+          return;
+        }
+
+        const stale = currentSnapshotKey(generateResult.mode) !== generateResult.snapshotKey;
+        const totalPages = Math.max(1, Math.ceil(generateResult.plans.length / RESULTS_PAGE_SIZE));
+        generateResult.page = Math.min(Math.max(0, generateResult.page), totalPages - 1);
+        const pageStart = generateResult.page * RESULTS_PAGE_SIZE;
+        const pagePlans = generateResult.plans.slice(pageStart, pageStart + RESULTS_PAGE_SIZE);
+
+        const summaryParts = [
+          `${generateResult.totalFeasible} feasible plan${generateResult.totalFeasible === 1 ? "" : "s"} found in total.`,
+        ];
+        if (generateResult.capped) {
+          summaryParts.push(
+            `Only the top ${generateResult.plans.length}, ranked by your enabled preferences, are listed below — the rest aren't shown.`,
+          );
+        }
+        generateResultsSummaryEl.innerHTML = summaryParts.map((p) => esc(p)).join(" ") +
+          (stale
+            ? ' <strong class="conflict-note">These results are out of date — your candidates, preview or conditions changed since you generated them. Regenerate before applying.</strong>'
+            : "");
+
+        generateResultsBodyEl.innerHTML = pagePlans
+          .map((plan, i) => {
+            const globalIndex = pageStart + i;
+            const courseList = plan.courses
+              .map(
+                (c) =>
+                  `${esc(c.code)} ${DAY_ABBR[c.dayOfWeek]} ${fmtTime(c.startMinutes)}–${fmtTime(c.endMinutes)}${c.pending ? " (section pending)" : ""}`,
+              )
+              .join(", ");
+            return `<article class="generated-plan-card">
+              <p class="generated-plan-courses">${courseList}</p>
+              <p class="generated-plan-meta">Days on campus (tutorials only): ${plan.daysOnCampusCount}${plan.pendingCount > 0 ? ` · ${plan.pendingCount} section${plan.pendingCount === 1 ? "" : "s"} still to choose` : ""}</p>
+              <div class="generated-plan-actions">
+                <button type="button" class="view-plan-btn" data-plan-index="${globalIndex}">View weekly schedule</button>
+                <button type="button" class="apply-plan-btn" data-plan-index="${globalIndex}" ${stale ? "disabled" : ""}>Apply to current preview</button>
+              </div>
+            </article>`;
+          })
+          .join("");
+
+        generateResultsPaginationEl.innerHTML =
+          totalPages > 1
+            ? `<button type="button" id="generate-page-prev" ${generateResult.page === 0 ? "disabled" : ""}>Previous</button>
+               <span>Page ${generateResult.page + 1} of ${totalPages}</span>
+               <button type="button" id="generate-page-next" ${generateResult.page === totalPages - 1 ? "disabled" : ""}>Next</button>`
+            : "";
+      }
+
+      generatePreviewTimesBtn.addEventListener("click", () => runGenerate("preview"));
+      generateFromCandidatesBtn.addEventListener("click", () => runGenerate("candidates"));
+
+      generateResultsCancelBtn.addEventListener("click", () => {
+        generateResult = null;
+        renderGenerateResults();
+      });
+
+      generateResultsPaginationEl.addEventListener("click", (event) => {
+        if (!generateResult?.ok) return;
+        const target = event.target as HTMLElement;
+        if (target.id === "generate-page-prev") generateResult.page -= 1;
+        else if (target.id === "generate-page-next") generateResult.page += 1;
+        else return;
+        renderGenerateResults();
+      });
+
+      generateResultsBodyEl.addEventListener("click", (event) => {
+        if (!generateResult?.ok) return;
+        const viewBtn = (event.target as HTMLElement).closest<HTMLButtonElement>(".view-plan-btn");
+        if (viewBtn) {
+          const plan = generateResult.plans[Number(viewBtn.dataset.planIndex)];
+          if (plan) renderPlanDetail(plan);
+          return;
+        }
+        const applyBtn = (event.target as HTMLElement).closest<HTMLButtonElement>(".apply-plan-btn");
+        if (applyBtn) {
+          if (currentSnapshotKey(generateResult.mode) !== generateResult.snapshotKey) {
+            renderGenerateResults();
+            return;
+          }
+          const plan = generateResult.plans[Number(applyBtn.dataset.planIndex)];
+          if (plan) applyGeneratedPlan(plan);
+        }
+      });
+
+      planDetailCloseBtn.addEventListener("click", closePlanDetail);
+
+      function readPreferencesFromForm(): PreferencesState {
+        const blackoutDays = [...preferencesPanelEl.querySelectorAll<HTMLInputElement>(".blackout-day-checkbox:checked")].map(
+          (cb) => Number(cb.dataset.day),
+        );
+        const avoidDays = [...preferencesPanelEl.querySelectorAll<HTMLInputElement>(".avoid-day-checkbox:checked")].map((cb) =>
+          Number(cb.dataset.day),
+        );
+        const minimizeDaysOnCampus = (document.getElementById("minimize-days-checkbox") as HTMLInputElement).checked;
+        const desiredCourseCount = Number(
+          preferencesPanelEl.querySelector<HTMLInputElement>('input[name="desired-count"]:checked')?.value ?? 3,
+        );
+        return { desiredCourseCount, blackoutDays, softPreferences: { minimizeDaysOnCampus, avoidDays } };
+      }
+
+      async function savePreferences() {
+        const body = readPreferencesFromForm();
+        preferencesStatusEl.textContent = "Saving…";
+        preferencesStatusEl.classList.remove("conflict-note");
+        try {
+          const res = await fetch("/api/preferences", {
+            method: "PUT",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify(body),
+          });
+          const json = await res.json();
+          if (!res.ok) {
+            preferencesStatusEl.textContent = json.error ?? "Couldn't save your conditions.";
+            preferencesStatusEl.classList.add("conflict-note");
+            return;
+          }
+          preferencesState = json;
+          preferencesStatusEl.textContent = "Saved.";
+        } catch {
+          preferencesStatusEl.textContent = "Couldn't reach the server to save your conditions.";
+          preferencesStatusEl.classList.add("conflict-note");
+        } finally {
+          // A saved preference change can invalidate an existing generated
+          // result's snapshot key — re-render so a stale banner (and disabled
+          // apply buttons) appear immediately rather than only on next click.
+          renderGenerateResults();
+        }
+      }
+
+      preferencesPanelEl.addEventListener("change", (event) => {
+        const target = event.target as HTMLInputElement;
+        if (
+          target.matches(".blackout-day-checkbox") ||
+          target.matches(".avoid-day-checkbox") ||
+          target.id === "minimize-days-checkbox" ||
+          target.name === "desired-count"
+        ) {
+          savePreferences();
+        }
+      });
 
       // Deliberately a separate listener from the "change" one below, on a
       // separate element (.schedule-card-toggle is a <button>, never the

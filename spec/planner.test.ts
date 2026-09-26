@@ -109,4 +109,63 @@ describe("planner page", () => {
     const hasEmptyMessage = html.includes("don't have a confirmed enrolment yet");
     expect(hasList || hasEmptyMessage).toBe(true);
   });
+
+  // Phase 4: auto-schedule structural checks. These assert what's actually
+  // rendered server-side (markup, hidden state, restored preference values)
+  // rather than the client script's behaviour — nothing here exercises a
+  // real browser, so generate/apply/pagination interaction itself is only
+  // verified at the API level (spec/plans-generate.test.ts) and by manual
+  // check, not here.
+  describe("auto-schedule section", () => {
+    it("explains the hard/soft distinction and that only tutorials count for day-based conditions", async () => {
+      const html = await getPlannerHtml();
+      expect(html).toContain('id="autoschedule-heading"');
+      expect(html).toMatch(/hard rule/i);
+      expect(html).toMatch(/tutorials only/i);
+    });
+
+    it("renders both trigger buttons, described as user-triggered and non-destructive to the confirmed enrolment", async () => {
+      const html = await getPlannerHtml();
+      expect(html).toContain('id="generate-preview-times-btn"');
+      expect(html).toContain('id="generate-from-candidates-btn"');
+      expect(html).toMatch(/never changes what's listed here|touches your confirmed enrolment/i);
+    });
+
+    it("renders the results section and plan-detail modal hidden before any client script runs", async () => {
+      const html = await getPlannerHtml();
+      const resultsIndex = html.indexOf('id="generate-results"');
+      expect(resultsIndex).toBeGreaterThan(-1);
+      expect(html.slice(resultsIndex, resultsIndex + 80)).toContain("hidden");
+
+      const modalIndex = html.indexOf('id="plan-detail-modal"');
+      expect(modalIndex).toBeGreaterThan(-1);
+      expect(html.slice(modalIndex, modalIndex + 140)).toContain("hidden");
+    });
+
+    // Restores whatever this file found in place before it started, in a
+    // finally block, so a run in any file order leaves plan_preferences
+    // exactly as it found it — this file doesn't otherwise own that table
+    // (see spec/preferences.test.ts and spec/plans-generate.test.ts).
+    it("restores saved conditions (blackout/avoid days, minimize-days, desired count) after a reload", async () => {
+      const original = await json("/api/preferences", "GET").then((r) => r.json());
+      try {
+        const res = await json("/api/preferences", "PUT", {
+          desiredCourseCount: 4,
+          blackoutDays: [5],
+          softPreferences: { minimizeDaysOnCampus: true, avoidDays: [2] },
+        });
+        expect(res.status).toBe(200);
+
+        const html = await getPlannerHtml();
+        expect(html).toMatch(/class="blackout-day-checkbox" data-day="5" checked/);
+        expect(html).toMatch(/class="avoid-day-checkbox" data-day="2" checked/);
+        expect(html).toMatch(/id="minimize-days-checkbox"\s+checked/);
+        expect(html).toMatch(/name="desired-count" value="4" checked/);
+        expect(html).not.toMatch(/name="desired-count" value="3" checked/);
+      } finally {
+        const restore = await json("/api/preferences", "PUT", original);
+        expect(restore.status).toBe(200);
+      }
+    });
+  });
 });
