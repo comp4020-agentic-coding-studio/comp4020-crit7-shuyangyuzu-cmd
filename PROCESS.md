@@ -1176,6 +1176,87 @@ change to the data model, the generator, or any API route; nothing pushed to
 pre-deploy checks, and the deploy itself are recorded as their own step below
 once done.
 
+### Phase 8 — first push, first deploy, and checking persistence for real
+
+I authorised the agent to run the remaining pre-push checks, push to
+`origin`, and deploy to the existing Fly app on its own, without stopping to
+ask after each step, and to report back once genuinely done or blocked. This
+section records what it actually did, not just that "checks passed."
+
+**Pre-push checks.** Before touching `origin`, the agent confirmed no secret
+had ever been committed (`git log --all -- mise.local.toml .data` and a
+`git grep` for credential-shaped strings across tracked files, both clean —
+the only matches were the legitimate `${{ secrets.FLY_API_TOKEN }}` reference
+in the CI workflow and a commented-out example in `mise.toml`), ran
+`pnpm check` (typecheck clean; **14** test files, **183** tests, all
+passing) and `pnpm check:evidence` (both checks green). It also checked, via
+`flyctl status` and `flyctl volumes list`, that the Fly app
+(`comp4020-crit7-shuyangyuzu-cmd`, owned by the course org) and its `data`
+volume already existed before deploying to either.
+
+**On the 15→14 files / 186→183 tests drop**, since I asked for this to be
+checked against the actual diff rather than assumed benign: it's exactly
+accounted for. Commit
+[`7d12b37`](https://github.com/comp4020-agentic-coding-studio/comp4020-crit7-shuyangyuzu-cmd/commit/7d12b37)
+(Phase 6, above) deleted `spec/guestbook.test.ts` as dead-code cleanup when
+the starter's guestbook demo was replaced by the real home page — that file
+held exactly three `it(...)` cases. 15 − 1 file = 14, 186 − 3 tests = 183,
+with nothing else added or removed in between. Nothing was quietly dropped;
+the numbers in the Phase 6 write-up above were accurate for the state that
+existed *at that point*, and the current numbers are accurate for now.
+
+**Push and deploy.** `git push origin main` landed 33 commits
+(`2b7ee1e..afe6ff2`), a plain push, no `--force`. The first
+`flyctl deploy --remote-only --ha=false -a comp4020-crit7-shuyangyuzu-cmd`
+attempt was refused by the coding tool's own permission layer as a
+production deploy — it would not run it on a standing authorisation alone.
+I gave explicit approval for that specific command in the moment, and the
+agent then ran it: image built cleanly, the single existing machine was
+updated in place, and neither the volume nor any other app was touched.
+
+**Live verification the agent actually did**, as distinct from "checks
+passed" or "CI passed" (I asked these be kept visibly separate, since they
+aren't the same claim): `/`, `/courses/`, and `/planner/` all return HTTP
+200 on the live URL. The agent then opened a real headless-Chromium session
+against the *live* URL — not just localhost — at both 1920×1080 and
+390×844, and reviewed the resulting screenshots itself: correct page
+titles, the "Prototype, not an official ANU service" disclaimer present,
+layout intact at both sizes. That is still the agent's own read of the
+screenshots, not mine — I have not yet sat down and clicked through the
+deployed app myself, and that's still mine to do.
+
+**Persistence was checked, not assumed from the volume merely existing** —
+I specifically asked for this, since a volume being present doesn't by
+itself prove a redeploy or restart won't reset data. `src/lib/db.ts` reads
+`DATABASE_PATH` (`/data/app.db` in production, matching `fly.toml`'s
+`[mounts] destination = "/data"`), runs the Drizzle migrations and the
+idempotent demo-data seed at boot, and the seed never touches
+`candidate_courses`, `plan_preferences`, or `confirmed_enrollments`. To
+verify this held in practice rather than on paper, the agent added a real
+candidate course through the live API, then restarted the actual Fly
+machine (not just re-read the same warm process), confirmed the candidate
+survived that restart, and then deleted it — leaving the live app's data
+back at its original empty state (no candidates, no confirmed enrolment,
+default preferences), unchanged from before this check.
+
+**CI status: skipped, not passed**, and I want that distinction on record
+rather than glossed over. `.github/workflows/checks.yml` gates both its
+`check` and `deploy` jobs on the repo being public, and the repo is still
+private (deliberately — flipping it is `ship`'s job, not something done
+mid-build). The run this push triggered shows both jobs as skipped. CI has
+not yet actually built, tested, or deployed anything itself; it will, the
+first time the repo goes public.
+
+Commits for this round:
+- [`2b7ee1e...afe6ff2`](https://github.com/comp4020-agentic-coding-studio/comp4020-crit7-shuyangyuzu-cmd/compare/2b7ee1e...afe6ff2) — first push to `origin`, 33 commits, no force
+- deploy — `flyctl deploy --remote-only --ha=false -a comp4020-crit7-shuyangyuzu-cmd`, no commit of its own (a deploy, not a code change)
+
+Still mine to do: read `reflections/crit-7.md` and both new `PROCESS.md`
+sections myself and decide whether to remove their "pending my review"
+markers; click through the live app myself rather than relying on the
+agent's own screenshot review; confirm the actual crit-7 cutoff against the
+course site and decide when to `ship`.
+
 ---
 
 *Still pending my own review and adoption, as noted at the top of this file:
