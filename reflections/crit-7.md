@@ -28,7 +28,8 @@ passing tests are useful, but a crowded page can still make a task difficult.
 When using AI, I want to keep trying the result and giving specific feedback,
 rather than relying only on the agent's completion reports.
 
-I feel the intended features are mostly there, but full browser acceptance
-and deployment verification remain unfinished. The prototype uses demo data
-and weekly preferences rather than specific travel dates, and does not
-change real ANUHub enrolments.
+Since then, the agent extended Playwright to cover the auto-scheduler: both
+modes, viewing a plan without disturbing my preview, and Apply updating the
+preview without touching a confirmed enrolment, at both viewports. That is
+the agent's check, not mine; I have not clicked through the deployed app.
+The prototype uses demo data, not real dates, and never touches ANUHub.
