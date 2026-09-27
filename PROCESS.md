@@ -895,7 +895,14 @@ Verification the agent ran: for the intermediate ("confirm-only") state,
 `pnpm typecheck` (0 errors, the same pre-existing `is:inline` hints as every
 prior round) and `pnpm test` (185/185 passing); after restoring the full
 (both-features) state, the same two checks again, `pnpm typecheck` clean and
-`pnpm test` at 186/186 passing across the suite's 14 spec files. The new
+`pnpm test` at 186/186 passing across the suite's 15 test files (14 under
+`spec/` plus `scripts/check-evidence.test.ts`, which `vitest.config.ts`'s
+`include` glob also picks up — I under-counted this as "14" when I first
+wrote this section, by only listing `spec/*.test.ts` myself instead of
+reading vitest's own reported file count; corrected once I actually reran
+the suite and read its "Test Files 15 passed" line directly. No test file
+was ever deleted, merged, or skipped — see the phase-6 prep note below for
+the full re-check). The new
 assertions in `spec/enrollment.test.ts` (the >4-course rejection and its
 rollback check) and `spec/planner.test.ts` (the confirm section's disclosure
 and diff markup, the confirmed list rendering with a reachable confirm
@@ -928,4 +935,76 @@ requirement checking, no multi-semester planning, and nothing pushed to
 left before the crit is the two standing gaps named above and throughout
 this document — an actual look at rendered pixels at both viewports, which
 only I can do, and my own review and adoption of this file, which remains a
+draft until I have reviewed it (see below).
+
+### Phase 6 prep — re-checking the test count, the plan-preview grid, and starting local acceptance
+
+Before touching anything visual, I asked the agent to re-check two things
+that looked like they might be regressions from this document's own numbers,
+find and start whatever dev server this project already has running (never
+stopping anyone else's process to do it), and hand me a concrete, data-backed
+walkthrough plus an honest list of everything still outstanding before the
+crit — no visual changes this round.
+
+**1. The "15 files → 14 files" question.** I'd noticed this document reported
+"15 spec files, 179 tests" after phase 4's UI commit and "15 spec files, 182
+tests" after the grid-reuse fix, but the phase 5 section I'd just had written
+said "14 spec files, 186 tests." I asked the agent to find out whether a test
+file had actually been deleted, merged, or silently skipped, not just assume
+a typo. It compared `git ls-tree` for `spec/` at the phase-4 UI commit
+(`82ffcc9`), the grid-reuse commit (`d8219f7`), and current `HEAD` directly:
+the same 14 `spec/*.test.ts` files exist, unchanged, at all three points —
+nothing was ever deleted or merged. The actual discrepancy was in how the
+count was taken: `vitest.config.ts`'s `include` glob is
+`["spec/**/*.test.ts", "scripts/**/*.test.ts"]`, so vitest's own "Test Files"
+count has always included `scripts/check-evidence.test.ts` alongside the 14
+in `spec/`, for 15 total. When I wrote phase 5's verification paragraph, I
+listed spec files myself with `ls spec/*.test.ts` instead of reading vitest's
+own reported count, and undercounted by exactly the one file outside
+`spec/`. The agent reran `pnpm test` directly to check, rather than trust
+either number: current result is **15 test files, 186 tests, all passing**,
+consistent with 179 → 182 → 186 tests as phase 4's UI, the grid-reuse fix,
+and phase 5 each added their own new assertions, with no drop anywhere. I've
+corrected the miscounted line in phase 5's section above rather than leaving
+two conflicting numbers in this document.
+
+**2. Whether the generated-plan preview really uses the weekly grid.** This
+was the whole point of the "Phase 4 correction" round above — I asked the
+agent to confirm, not re-do, that work, since re-implementing something
+already fixed on my say-so alone would be exactly the kind of unverified
+claim this document is supposed to avoid. It grepped `planner.astro` for the
+plan-detail view's actual markup and found `#plan-detail-grid` instantiated
+from the same `WeeklyGridSkeleton` component as the manual preview's
+`#weekly-grid`, and its data populated through the same
+`renderSlotsIntoGrid()` function via `viewPlan()` — i.e. the same fixed
+08:00–22:00 axis, the same overlap-column packing, the same pending-section
+handling, not a separate day-list-only view. That work is already committed
+as [`d8219f7`](https://github.com/comp4020-agentic-coding-studio/comp4020-crit7-shuyangyuzu-cmd/commit/d8219f7); nothing needed rebuilding or a new commit for this item.
+
+**3. Starting local acceptance.** No dev server for this project was running
+before this round (checked `netstat` for the common ports first, per the
+standing rule against guessing). The agent started one with `pnpm dev`,
+backgrounded, and recorded the PID Astro itself reports rather than a PID it
+guessed: **PID 32060**, `Dev server running at http://localhost:4321`. Both
+routes respond `200`: **http://localhost:4321/courses/** and
+**http://localhost:4321/planner/**. Per the standing safety rule, stopping
+this later means stopping exactly PID 32060 (or `astro dev stop`, which
+targets its own recorded PID file) — never a name-matched sweep of `node`
+processes, which would risk any other project's server running on this
+machine.
+
+The concrete walkthrough the agent handed me next, and the acceptance/
+reflection todo list, are recorded in my own notes from this session rather
+than duplicated here — this file documents what the agent built and
+verified, not a live testing session I haven't finished yet. I'll fold the
+outcome of actually clicking through it into this document myself, after I
+do it.
+
+Commit for this round: the test-count correction above and this section —
+docs only, no app code changed — hash to be filled in once committed.
+
+Deliberately out of scope this round, per my instruction: no visual/layout
+changes; the dev server started above is for me to use, not for the agent to
+click through on its own, since there is still no browser-automation tool in
+this environment.
 draft until I say otherwise.
