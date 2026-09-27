@@ -5,10 +5,18 @@ import { expect, test } from "@playwright/test";
 // never touches a developer's own ./.data/app.db. One long, sequential test
 // rather than many independent ones: each step's state (candidates, preview,
 // confirmed enrolment) is exactly what the next step needs, the same way a
-// real visitor would build it up.
+// real visitor would build it up. This also covers the auto-schedule section
+// (both "auto-schedule my current preview" and "generate from candidates"
+// modes, viewing a generated plan without mutating the manual preview, and
+// Apply updating the preview without ever touching an already-confirmed
+// enrolment) — deliberately appended to this same test rather than split into
+// a second spec file, since every file under e2e/ shares one running
+// server+database per viewport project (see playwright.config.ts): a second
+// file racing to add/toggle the same candidate corrupted this file's own
+// "add three candidates" step the first time this was tried.
 test.describe.configure({ mode: "serial" });
 
-test("full planner flow: search, schedule, multi-section, confirm, refresh, modify, withdraw", async ({ page }) => {
+test("full planner flow: search, schedule, multi-section, confirm, refresh, modify, withdraw, auto-schedule", async ({ page }) => {
   await test.step("root path is a real entry point, not the starter guestbook", async () => {
     await page.goto("/");
     await expect(page.locator("h1")).toHaveText("ANU course planner (demo)");
@@ -164,5 +172,128 @@ test("full planner flow: search, schedule, multi-section, confirm, refresh, modi
     await page.getByRole("link", { name: "Courses", exact: true }).click();
     await expect(page.locator("#candidate-list li")).toHaveCount(3);
     await expect(page.locator("#candidate-list")).toContainText("COMP2100");
+  });
+
+  await test.step("add more candidates for auto-schedule coverage, and lock STAT1008 as required", async () => {
+    // Still on /courses/ from the previous step. These four never clash with
+    // each other or with STAT1008 on any tutorial option (seed.ts), so a
+    // feasible plan built from this pool is guaranteed to exist regardless of
+    // which subset the generator ranks first.
+    for (const code of ["MATH1013", "PHYS1201", "COMP3120", "COMP4444"]) {
+      await page.fill("#course-search", code);
+      const card = page.locator(`.course-card[data-code="${code.toLowerCase()}"]`);
+      await expect(card).toBeVisible();
+      await card.locator(".candidate-toggle").click();
+      await expect(card.locator(".candidate-toggle")).toHaveText("Remove from candidates");
+    }
+
+    // STAT1008 is the only demo course whose one tutorial time is offered as
+    // two same-time sections in different rooms — marking it required
+    // guarantees every "generate from candidates" result below includes it,
+    // so the pending-section assertions are deterministic. It also always
+    // clashes with COMP2100 (already a candidate from the flow above), so
+    // requiring STAT1008 has the side effect of guaranteeing COMP2100 is
+    // never part of a returned plan — nothing here relies on that, but it's
+    // why no assertion below needs to rule COMP2100 out explicitly.
+    await page.fill("#course-search", "STAT1008");
+    const stat1008Card = page.locator('.course-card[data-code="stat1008"]');
+    const requiredCheckbox = stat1008Card.locator(".required-checkbox");
+    if (!(await requiredCheckbox.isChecked())) {
+      await requiredCheckbox.check();
+    }
+    await page.fill("#course-search", "");
+    await expect(page.locator("#candidate-list li")).toHaveCount(7);
+  });
+
+  await test.step("reset the manual preview to empty, and set auto-schedule preferences", async () => {
+    await page.getByRole("link", { name: "Planner", exact: true }).click();
+    await expect(page).toHaveURL(/\/planner\/?$/);
+
+    // Earlier steps left COMP1010/COMP2100 checked into the preview — the
+    // preview lives only in sessionStorage (see planner.astro), so clear it
+    // there directly and reload, exactly as a fresh tab would see it. This is
+    // simpler and more reliable than unchecking through the UI: unchecking
+    // one card re-renders the whole schedule-card list, and this app's own
+    // "tick a candidate to auto-expand it" behaviour made a click-driven loop
+    // here flaky across re-renders.
+    await page.evaluate(() => sessionStorage.removeItem("planner-preview-v1"));
+    await page.reload();
+    await expect(page.locator("#preview-empty-note")).toBeVisible();
+
+    const checkedBlackout = page.locator(".blackout-day-checkbox:checked");
+    while (await checkedBlackout.count()) {
+      await checkedBlackout.first().uncheck();
+    }
+    await page.locator('input[name="desired-count"][value="4"]').check();
+    await expect(page.locator("#preferences-status")).toHaveText("Saved.");
+  });
+
+  await test.step("generate a plan from candidates: includes the required course, flags its shared timeslot as pending", async () => {
+    await page.locator("#generate-from-candidates-btn").click();
+    await expect(page.locator("#generate-results")).toBeVisible();
+    await expect(page.locator("#generate-results-heading")).toHaveText("Generated plans from your candidates");
+
+    const firstCard = page.locator(".generated-plan-card").first();
+    await expect(firstCard).toBeVisible();
+    await expect(firstCard).toContainText("STAT1008");
+    // The generator must never silently default to one of STAT1008's two
+    // same-time sections — it has to say the section is still pending.
+    await expect(firstCard).toContainText("(section pending)");
+  });
+
+  await test.step("viewing a generated plan never changes the manual preview, and closing leaves it untouched", async () => {
+    await expect(page.locator("#preview-empty-note")).toBeVisible();
+
+    await page.locator(".view-plan-btn").first().click();
+    await expect(page.locator("#plan-detail-modal")).toBeVisible();
+    await expect(page.locator("#plan-detail-pending-note")).toBeVisible();
+    await expect(page.locator("#plan-detail-grid .session-block.pending")).not.toHaveCount(0);
+
+    await page.locator("#plan-detail-close").click();
+    await expect(page.locator("#plan-detail-modal")).toBeHidden();
+
+    // Still empty — opening/closing the read-only plan view never touched the
+    // manual preview above it.
+    await expect(page.locator("#preview-empty-note")).toBeVisible();
+  });
+
+  await test.step("Apply loads the plan into the preview, but STAT1008's room stays a pending choice rather than a silent default", async () => {
+    await page.locator(".apply-plan-btn").first().click();
+    await expect(page.locator("#preview-empty-note")).toBeHidden();
+
+    const stat1008 = page.locator(".schedule-card").filter({ hasText: "STAT1008" });
+    await expect(stat1008).toContainText("Room pending");
+    await expect(page.locator("#confirm-enrolment-btn")).toBeDisabled();
+    await expect(page.locator("#confirm-blocked-note")).toContainText("more than one room");
+  });
+
+  await test.step("Apply never touched the already-confirmed enrolment", async () => {
+    await expect(page.locator("#confirmed-list li")).toHaveCount(1);
+    await expect(page.locator("#confirmed-list")).toContainText("COMP1010");
+  });
+
+  await test.step("auto-schedule the current preview: keeps the exact same course set, only searches times", async () => {
+    const previewCourseIdsBefore = (
+      await page
+        .locator(".schedule-card .preview-include-checkbox:checked")
+        .evaluateAll((els) => els.map((el) => (el as HTMLElement).dataset.courseId))
+    ).sort();
+    expect(previewCourseIdsBefore.length).toBeGreaterThan(0);
+
+    await page.locator("#generate-preview-times-btn").click();
+    await expect(page.locator("#generate-results-heading")).toHaveText("Auto-scheduled tutorial times for your current preview");
+    await expect(page.locator(".generated-plan-card").first()).toBeVisible();
+
+    await page.locator(".apply-plan-btn").first().click();
+    const previewCourseIdsAfter = (
+      await page
+        .locator(".schedule-card .preview-include-checkbox:checked")
+        .evaluateAll((els) => els.map((el) => (el as HTMLElement).dataset.courseId))
+    ).sort();
+    expect(previewCourseIdsAfter).toEqual(previewCourseIdsBefore);
+
+    // Confirmed enrolment still untouched by this second Apply too.
+    await expect(page.locator("#confirmed-list li")).toHaveCount(1);
+    await expect(page.locator("#confirmed-list")).toContainText("COMP1010");
   });
 });
