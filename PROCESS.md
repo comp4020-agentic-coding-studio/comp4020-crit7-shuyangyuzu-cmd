@@ -1000,8 +1000,8 @@ verified, not a live testing session I haven't finished yet. I'll fold the
 outcome of actually clicking through it into this document myself, after I
 do it.
 
-Commit for this round: the test-count correction above and this section —
-docs only, no app code changed — hash to be filled in once committed.
+Commit for this round:
+- [`8ded25f`](https://github.com/comp4020-agentic-coding-studio/comp4020-crit7-shuyangyuzu-cmd/commit/8ded25f) — test-count correction and this section (docs only, no app code changed)
 
 Deliberately out of scope this round, per my instruction: no visual/layout
 changes; the dev server started above is for me to use, not for the agent to
