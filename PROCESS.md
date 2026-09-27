@@ -4,6 +4,14 @@
 commits it cites, at my request. I have not yet reviewed and adopted it —
 treat it as a draft until this note is removed.*
 
+*Each phase section below records the state of the build as of the point in
+time it was written — test counts, "still outstanding" notes, and scope
+statements included. Later phases sometimes correct an earlier phase's
+number or claim explicitly (and say so when they do), but where a later
+phase doesn't mention an earlier one, don't assume the earlier section was
+re-checked at the end. The one place the true, current state is meant to be
+authoritative is a final summary, not any individual phase section.*
+
 ## What I built
 
 A single-semester, single-demo-student course selection and timetable
@@ -17,7 +25,7 @@ Programs and Courses → ANUHub → Timetable round trip.
 ### Phase 1 — requirements and plan
 
 I picked the enrolment/timetabling slice because it's the ANU workflow that
-actually costs me time every semester: I have to check Programs and Courses
+actually costs me time: I have to check Programs and Courses
 for a course, then enrol in it on ANUHub, before Timetable will even show me
 its lecture and tutorial times. That means courses I'm only comparing can
 push me over the real enrolment cap and force me to unenrol just to keep
@@ -60,9 +68,10 @@ Before committing, the agent re-read `PLAN.md` and the `CLAUDE.md` additions
 against the actual repo state (schema, existing tests, spec) to check they
 were consistent with what's really there, and ran `pnpm check` (still green,
 unaffected by a docs-only change) and `pnpm check:evidence`. That check
-still fails on the missing `reflections/crit-7.md` — expected, since that
-file is written at the phase-6 cutoff, not now — and otherwise passes now
-that this file's template comment is gone and cites a real commit.
+still fails on the missing `reflections/crit-7.md` — expected, since I
+simply hadn't written that file yet at this point in the build, not because
+any rule requires it to wait for a particular phase — and otherwise passes
+now that this file's template comment is gone and cites a real commit.
 
 ### Phase 2 — database, migration, demo data, and backend interfaces
 
@@ -117,8 +126,8 @@ Verification the agent ran before each of the three commits below: `pnpm
 typecheck` (0 errors) and `pnpm test` (`astro build` + the full vitest run —
 10 spec files, 74 tests, all passing). `pnpm check:evidence` was also run
 and still fails, as expected: it only fails on the missing
-`reflections/crit-7.md`, which is phase-6 work I have deliberately not
-started yet. I have not asked the agent to claim that check passes, and it
+`reflections/crit-7.md`, which I simply haven't written yet at this point in
+the build. I have not asked the agent to claim that check passes, and it
 hasn't.
 
 Commits for this phase, in the independent completion points I asked for:
@@ -216,7 +225,7 @@ Commits for this phase:
 - [`ca8164c`](https://github.com/comp4020-agentic-coding-studio/comp4020-crit7-shuyangyuzu-cmd/commit/ca8164c) — tests for state separation, persistence, and the conflict primitive
 
 Deliberately out of scope this phase, per my instruction: the
-auto-generate-plan UI and the final-confirm-enrolment UI (both phase 4),
+auto-generate-plan UI (phase 4) and the final-confirm-enrolment UI (phase 5),
 and pushing to `origin` or deploying anything.
 
 ### Phase 3 revision — the lecture rule, session locations, and a two-page split
@@ -306,7 +315,7 @@ raw JSON data-island scripts as before) and `pnpm test` (`astro build`
 plus the full vitest run — 13 spec files, 123 tests, all passing,
 including the phase-2 `/api/courses` tests once restored). `pnpm
 check:evidence` still fails only on the missing `reflections/crit-7.md`,
-exactly as expected this far from the phase-6 cutoff.
+which I simply still hadn't written at this point in the build.
 
 What I still have not had verified directly: there is still no
 browser-automation tool available in this environment, so I have not had
@@ -327,7 +336,7 @@ Commits for this round:
 - [`d5fdbbb`](https://github.com/comp4020-agentic-coding-studio/comp4020-crit7-shuyangyuzu-cmd/commit/d5fdbbb) — the `/courses/` + `/planner/` page split, sessionStorage preview persistence, and the lecture-overlay styling fix
 
 Deliberately out of scope this round, per my instruction: auto-generating
-plan combinations and the final confirm/withdraw UI (still phase 4), and
+plan combinations (phase 4) and the final confirm/withdraw UI (phase 5), and
 pushing to `origin` or deploying anything.
 
 ### Phase 3 revision — a time-proportional weekly grid
@@ -503,24 +512,26 @@ for one:
   container — a different element and a different event from the preview
   checkbox's own `change` listener, which is what actually guarantees
   neither one can affect the other, rather than just hoping they don't. One
-  judgement call I made here, since my instruction didn't fully spell it
-  out: when you tick a candidate into the preview, the agent now also opens
-  that card automatically (there's now something to configure — a tutorial
-  time), and closes it again if you untick it. Clicking the expand toggle
-  itself never touches the checkbox. If I'd rather this be fully manual with
-  no auto-open, that's a one-line change to point out at review time.
-  Collapsed rows show the checkbox, course code, required badge, the chosen
-  time (or "Choose a time" if none yet), and a short status —
-  "Scheduled" / "Room pending" / "Clash" — using the same `classifyOverlap`
-  rule the grid and the option list already used, just grouped by course
-  instead of by slot. Expanded, each time option is one line (radio + day +
-  start–end + a short status word), with the room/location on the line
-  below only when relevant. "No conflict" is now that one short phrase
-  instead of a full sentence repeated per option; a real clash still names
-  the specific course and the specific time it clashes with, not just the
-  word "Clash" — I checked this stayed true after the rewrite, since
-  shortening the good case is easy to over-apply to the bad case by
-  accident.
+  judgement call the agent made here, since my instruction didn't fully
+  spell it out: when you tick a candidate into the preview, the agent now
+  also opens that card automatically (there's now something to configure —
+  a tutorial time), and closes it again if you untick it. Clicking the
+  expand toggle itself never touches the checkbox. This is the agent's own
+  call, not something I've reviewed or approved yet — if I'd rather this be
+  fully manual with no auto-open, that's a one-line change to point out at
+  review time. Collapsed rows show the checkbox, course code, required
+  badge, the chosen time (or "Choose a time" if none yet), and a short
+  status — "Scheduled" / "Room pending" / "Clash" — using the same
+  `classifyOverlap` rule the grid and the option list already used, just
+  grouped by course instead of by slot. Expanded, each time option is one
+  line (radio + day + start–end + a short status word), with the
+  room/location on the line below only when relevant. "No conflict" is now
+  that one short phrase instead of a full sentence repeated per option; a
+  real clash still names the specific course and the specific time it
+  clashes with, not just the word "Clash" — the agent checked this stayed
+  true after the rewrite, since shortening the good case is easy to
+  over-apply to the bad case by accident; I have not independently verified
+  this myself.
 - **Checkbox/radio whitespace (#3).** The cause was exactly what I
   suspected from the screenshot: `src/styles.css`'s original, guestbook-era
   `input { flex: 1; min-width: 12rem; padding: 0.4rem 0.6rem; }` rule has no
@@ -642,10 +653,11 @@ preferences object or a candidate list from the request body, only a
 `mode` and, for mode `"preview"`, a `courseIds` array that is independently
 checked against the real, current candidate list (a ghost or fabricated
 course id in that array is rejected with a 400, not silently ignored or
-trusted). Nothing in this route can write anywhere: I checked myself that
+trusted). Nothing in this route can write anywhere: the agent checked that
 `listCourses`, `listCandidates`, and `getPreferences` are all read-only
 functions, and that no `db.transaction`/insert/update call exists anywhere
-in the file. `spec/plans-generate.test.ts` exercises this at the HTTP
+in the file — I have not independently re-checked this myself.
+`spec/plans-generate.test.ts` exercises this at the HTTP
 level — malformed input, an untrusted course id, an empty preview, a
 single fixed course not being limited by the 3/4 rule, the multi-section
 pending case, both of a course's real tutorial options being found with an
@@ -671,24 +683,27 @@ weekly-schedule view for one result that doesn't touch the preview; and an
 replaces it — cancelling the results view leaves the manual preview
 exactly as it was.
 
-Two design calls I made, or confirmed, while this was being built, since my
-original instruction left the exact mechanism open:
+Two mechanism choices the agent made on its own while this was being built,
+since my original instruction left the exact mechanism open:
 
 - **Staleness.** Rather than hunting down and flagging every place a
   candidate, a required flag, a preference, or (for operation A) the
   preview's own course set could change, the agent computes a snapshot key
   from all of those at generate time and again at render/apply time — a
   mismatch marks the result stale, disables every "Apply" button, and says
-  why, without needing a manually-maintained list of invalidation sites. I
-  reviewed this approach and think it's the right shape for a prototype at
-  this scale: it can't miss a mutation path the way scattered manual flags
-  could.
+  why, without needing a manually-maintained list of invalidation sites.
+  This is the agent's own design, not something I asked for by name; based
+  on reading the reasoning above, I think it's the right shape for a
+  prototype at this scale, since it can't miss a mutation path the way
+  scattered manual flags could — but I have not tried to break it myself.
 - **Plan detail view.** Rather than reusing or duplicating the pixel-
-  precise weekly grid for a second surface, a generated plan's schedule is
-  shown as a simple day-grouped list. I agreed with the agent's reasoning
-  for this: there's no browser-automation tool available this round either,
-  so a second from-scratch rendering surface would be exactly the kind of
-  thing that could carry a layout bug nobody actually looks at before I do.
+  precise weekly grid for a second surface, the agent shipped a generated
+  plan's schedule as a simple day-grouped list, reasoning that with no
+  browser-automation tool available this round, a second from-scratch
+  rendering surface would be exactly the kind of thing that could carry a
+  layout bug nobody actually looks at. I had not reviewed or approved this
+  choice at the time — it turned out to be a real deviation from what I'd
+  actually asked for; see the correction immediately below.
 
 `spec/planner.test.ts` gained structural coverage of this page's own
 server-rendered markup for the new section: the hard/soft explanation
@@ -725,13 +740,19 @@ confirm/withdraw UI is still phase 5 and untouched; nothing was pushed to
 
 ### Phase 4 correction — reusing the weekly grid for the plan-detail view
 
-After using the auto-scheduler on real data, I decided the "plan detail
-view" call recorded above was wrong. A day-grouped list is not what I asked
-for, and it doesn't let me actually compare a generated plan against the
-manual preview at a glance the way the rest of this app is built to —
-everywhere else, "look at a week" means the same 08:00–22:00 time-axis grid.
-I asked the agent to fix this specifically, as its own round before phase 5,
-not folded into phase 5's own commits.
+Reviewing what got built against what I'd actually asked for elsewhere in
+this app, I found the "plan detail view" call recorded above was a real
+deviation from my requirement — not something I'd tried on real data and
+then reconsidered. As the previous section already says, there was still no
+browser-automation tool available at that point and I had not yet opened
+the dev server myself, so nothing about this correction came from using the
+feature; it came from checking the written plan against what I'd asked for.
+A day-grouped list is not what I asked for, and it doesn't let me actually
+compare a generated plan against the manual preview at a glance the way the
+rest of this app is built to — everywhere else, "look at a week" means the
+same 08:00–22:00 time-axis grid. I pointed this out and asked the agent to
+fix it specifically, as its own round before phase 5, not folded into phase
+5's own commits.
 
 The requirement: a generated plan's schedule view must reuse the *same*
 weekly grid component the manual preview already uses — same fixed
@@ -748,7 +769,7 @@ a secondary, clearly-labelled display, not the only view.
 
 The agent's approach, and why: rather than temporarily pointing the existing
 grid-rendering code at a generated plan's data and then swapping it back
-afterward — which it judged, and I agreed, was a real risk in this codebase
+afterward — which the agent judged was a real risk in this codebase
 specifically, since the manual preview's own render path
 (`savePreviewToStorage`) persists whatever the module-level preview state
 currently holds to `sessionStorage` — it pulled the grid's markup out into a
@@ -762,10 +783,12 @@ session-detail panel) is therefore a fully separate DOM subtree from the
 manual preview's own grid (`#weekly-grid`) — there is no shared state for
 viewing a plan to leak into, so "never touches the preview" holds by
 construction, not because of a careful swap-and-restore sequence that has to
-be gotten right every time. I reviewed this reasoning and think it's the
-right call: a swap-based approach would have worked too, but only if nobody
-ever forgot to reset the swap, which is exactly the kind of thing that goes
-unnoticed until someone's real preview data quietly changes.
+be gotten right every time. This is the agent's own reasoning, and it holds
+up on paper: a swap-based approach would have worked too, but only if
+nobody ever forgot to reset the swap, which is exactly the kind of thing
+that goes unnoticed until someone's real preview data quietly changes. I
+have not tested this myself beyond reading the diff and the reasoning
+above.
 
 A generated plan's pending tutorial slot now reads "To be chosen" as its
 location on the grid, and the plan-detail modal shows an explicit note
@@ -1077,8 +1100,9 @@ as `.tmp-visual-pass.mjs` in the repo root and was deleted once each round of
 screenshots was reviewed) that built the app, started it against its own
 temp database, and captured full-page screenshots of the home, courses, and
 planner pages — including the confirm dialog, the withdraw dialog, a
-scheduled preview, and an empty preview — at both 1920×1080 and 390×844. I
-reviewed every one of these images directly. This is the first round in the
+scheduled preview, and an empty preview — at both 1920×1080 and 390×844. The
+agent reviewed every one of these images directly; I have not personally
+looked at these screenshots myself. This is the first round in the
 whole build where the "look at both viewports before calling a page done"
 rule was actually satisfied by looking at pixels, not inferred from compiled
 CSS or served HTML, and it found three real bugs that every previous
@@ -1183,11 +1207,15 @@ I authorised the agent to run the remaining pre-push checks, push to
 ask after each step, and to report back once genuinely done or blocked. This
 section records what it actually did, not just that "checks passed."
 
-**Pre-push checks.** Before touching `origin`, the agent confirmed no secret
-had ever been committed (`git log --all -- mise.local.toml .data` and a
-`git grep` for credential-shaped strings across tracked files, both clean —
-the only matches were the legitimate `${{ secrets.FLY_API_TOKEN }}` reference
-in the CI workflow and a commented-out example in `mise.toml`), ran
+**Pre-push checks.** Before touching `origin`, the agent ran two specific
+checks, not an exhaustive audit: `git log --all -- mise.local.toml .data`
+(confirming those paths were never committed) and a `git grep` for
+credential-shaped strings across currently tracked files (the only matches
+were the legitimate `${{ secrets.FLY_API_TOKEN }}` reference in the CI
+workflow and a commented-out example in `mise.toml`). Both were clean, but
+that scopes to exactly what those two checks can see — it is not a claim
+that the entire git history has been proven free of any secret ever
+committed. It also ran
 `pnpm check` (typecheck clean; **14** test files, **183** tests, all
 passing) and `pnpm check:evidence` (both checks green). It also checked, via
 `flyctl status` and `flyctl volumes list`, that the Fly app
@@ -1244,8 +1272,13 @@ rather than glossed over. `.github/workflows/checks.yml` gates both its
 `check` and `deploy` jobs on the repo being public, and the repo is still
 private (deliberately — flipping it is `ship`'s job, not something done
 mid-build). The run this push triggered shows both jobs as skipped. CI has
-not yet actually built, tested, or deployed anything itself; it will, the
-first time the repo goes public.
+not yet actually built, tested, or deployed anything itself. Flipping the
+repo's visibility by itself does not trigger a run either — the workflow
+fires on `push`, `pull_request`, or an explicit `workflow_dispatch`, and a
+bare visibility change is none of those. CI will only actually run once the
+`ship` flow explicitly triggers it (via `workflow_dispatch`) after the repo
+is public — it is not something that happens automatically as a side effect
+of the flip.
 
 Commits for this round:
 - [`2b7ee1e...afe6ff2`](https://github.com/comp4020-agentic-coding-studio/comp4020-crit7-shuyangyuzu-cmd/compare/2b7ee1e...afe6ff2) — first push to `origin`, 33 commits, no force
@@ -1256,6 +1289,51 @@ sections myself and decide whether to remove their "pending my review"
 markers; click through the live app myself rather than relying on the
 agent's own screenshot review; confirm the actual crit-7 cutoff against the
 course site and decide when to `ship`.
+
+## Final summary — current state, superseding any conflicting phase note above
+
+This section is the one place in this document meant to be read as "true
+now," per the point-in-time note at the top. Everything below was checked
+by the agent, not by me clicking through the app myself, unless stated
+otherwise.
+
+- **Browser acceptance coverage.** Phase 7's Playwright suite originally
+  covered only the manual search → candidate → schedule → confirm →
+  reload → edit → withdraw flow. Following a review that pointed out this
+  did not cover the auto-scheduler at all, the agent extended
+  `e2e/planner-flow.spec.ts` (kept as one file rather than a second spec,
+  because this project's Playwright setup shares one server and one SQLite
+  database per viewport project, which makes an independent second spec
+  file unsafe against the same candidate/preview/confirmed state) to also
+  cover: both auto-schedule modes (generate from candidates, and
+  auto-schedule the current preview's times only); viewing a generated
+  plan's timetable without mutating the manual preview; closing that view
+  leaving the preview untouched; Apply loading a plan into the preview
+  without touching the already-confirmed enrolment; and the multi-section
+  shared-timeslot case never silently defaulting to a section (shown as
+  "section pending" / "Room pending," and blocking confirm with a specific
+  reason). All of this passes on both the desktop (1920×1080) and mobile
+  (390×844) viewport projects. This is now genuine, current browser-level
+  coverage of both the manual and auto-schedule paths — not yet a claim
+  that I have personally clicked through either path myself.
+- **This document's own attribution.** A follow-up review of this file
+  found several places where the agent's own checks, decisions, or
+  implementation choices had been written in a way that read as something
+  I had personally run, reviewed, or approved — including the plan-detail
+  view's original day-grouped-list design, which had been described as
+  something I'd tried and then reconsidered, when it was actually an
+  implementation that deviated from what I'd asked for, was pointed out to
+  the agent, and was corrected by the agent, without my ever having used it
+  first. Those passages have been corrected in place above rather than
+  rewritten as a separate retelling here.
+- **Not yet done by me, still standing:** I have not personally clicked
+  through the deployed or local app at either viewport; I have not
+  reviewed and adopted this file or `reflections/crit-7.md`, both of which
+  keep their "pending my review" markers; I have not decided when to
+  `ship`.
+- **Not done this round, and correctly not done:** since this round's
+  changes are test and documentation only (no application code changed),
+  nothing was redeployed and CI was not triggered.
 
 ---
 
