@@ -15,6 +15,26 @@ a {
   color: #0b5fff;
 }
 
+/* The site nav's four links had no layout rule at all, so the browser's
+   default inline-with-no-inter-element-gap rendering ran them together as
+   one unbroken string ("HomeCoursesPlannerAbout") on every page. */
+nav[aria-label="site"] {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1.25rem;
+  margin-block-end: 1rem;
+  font-size: 0.95rem;
+}
+
+nav[aria-label="site"] a {
+  text-decoration: none;
+}
+
+nav[aria-label="site"] a:hover,
+nav[aria-label="site"] a:focus-visible {
+  text-decoration: underline;
+}
+
 form {
   display: flex;
   flex-wrap: wrap;
@@ -50,14 +70,18 @@ main.courses {
 /* The site-wide `input` rule above (flex: 1; min-width: 12rem; padding:
    0.4rem 0.6rem) was written for the guestbook's single text <input> — it
    also matches every checkbox/radio, stretching each one into a large,
-   padded, empty-looking box instead of its natural size, which is the
-   "abnormal whitespace" around every checkbox/radio on this page. Scoped to
-   main.planner only, so the guestbook's own text input (and anything on
-   main.courses) is untouched. Labels wrapping these inputs (.preview-toggle,
-   .tutorial-option, .room-option) already use flex + gap for spacing, so
-   once the input is back to its natural size it sits close to its text. */
+   padded, empty-looking box instead of its natural size. That's abnormal
+   whitespace wherever a checkbox/radio appears: originally scoped to
+   main.planner only, but main.courses has its own required-checkbox
+   (.required-toggle, courses.astro) hit by the same site-wide rule, so it's
+   scoped to both. Labels wrapping these inputs (.preview-toggle,
+   .tutorial-option, .room-option, .required-toggle) already use flex + gap
+   for spacing, so once the input is back to its natural size it sits close
+   to its text. */
 main.planner input[type="checkbox"],
-main.planner input[type="radio"] {
+main.planner input[type="radio"],
+main.courses input[type="checkbox"],
+main.courses input[type="radio"] {
   flex: none;
   width: auto;
   min-width: 0;
@@ -66,7 +90,9 @@ main.planner input[type="radio"] {
 }
 
 main.planner input[type="checkbox"]:focus-visible,
-main.planner input[type="radio"]:focus-visible {
+main.planner input[type="radio"]:focus-visible,
+main.courses input[type="checkbox"]:focus-visible,
+main.courses input[type="radio"]:focus-visible {
   outline: 2px solid #0b5fff;
   outline-offset: 2px;
 }

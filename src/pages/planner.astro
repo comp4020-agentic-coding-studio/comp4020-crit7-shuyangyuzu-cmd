@@ -866,6 +866,25 @@ const plannerDataJson = JSON.stringify({
           outOfRangeEl.hidden = true;
           outOfRangeEl.textContent = "";
         }
+
+        // On narrow viewports the day-tabs row shows only one day at a time,
+        // and WeeklyGridSkeleton.astro defaults that to the *real* calendar
+        // day — which has no relationship to this demo's fixed course days.
+        // Left alone, a preview scheduled entirely on (say) Monday and
+        // Wednesday looks completely empty to anyone opening the planner on
+        // a Sunday. If the currently active day has nothing on it but some
+        // other day does, jump to the first (Monday-first) day that actually
+        // has a session, so the grid never appears empty when it isn't.
+        const tabsEl = gridRootEl.querySelector<HTMLElement>(".day-tabs");
+        const activeColumn = gridRootEl.querySelector<HTMLElement>(".day-column.mobile-active");
+        if (tabsEl && activeColumn) {
+          const daysWithSessions = new Set(slots.map((s) => s.session.dayOfWeek));
+          const activeDay = Number(activeColumn.dataset.day);
+          if (daysWithSessions.size > 0 && !daysWithSessions.has(activeDay)) {
+            const nextDay = [0, 1, 2, 3, 4, 5, 6].find((d) => daysWithSessions.has(d))!;
+            setActiveDay(tabsEl, gridRootEl, nextDay);
+          }
+        }
       }
 
       function renderWeeklyGrid() {
@@ -916,19 +935,22 @@ const plannerDataJson = JSON.stringify({
       // own day-header/day-column elements — shared by the manual preview's
       // grid and the plan-detail grid, each with its own tabs/grid pair, so
       // switching the visible day on one can never affect the other.
+      function setActiveDay(tabsEl: HTMLElement, gridRootEl: HTMLElement, day: number) {
+        tabsEl.querySelectorAll<HTMLButtonElement>(".day-tab").forEach((tab) => {
+          const isActive = Number(tab.dataset.day) === day;
+          tab.classList.toggle("mobile-active", isActive);
+          tab.setAttribute("aria-selected", String(isActive));
+        });
+        gridRootEl.querySelectorAll<HTMLElement>(".day-header, .day-column").forEach((el) => {
+          el.classList.toggle("mobile-active", Number(el.dataset.day) === day);
+        });
+      }
+
       function wireDayTabs(tabsEl: HTMLElement, gridRootEl: HTMLElement) {
         tabsEl.addEventListener("click", (event) => {
           const button = (event.target as HTMLElement).closest<HTMLButtonElement>(".day-tab");
           if (!button) return;
-          const day = Number(button.dataset.day);
-          tabsEl.querySelectorAll<HTMLButtonElement>(".day-tab").forEach((tab) => {
-            const isActive = Number(tab.dataset.day) === day;
-            tab.classList.toggle("mobile-active", isActive);
-            tab.setAttribute("aria-selected", String(isActive));
-          });
-          gridRootEl.querySelectorAll<HTMLElement>(".day-header, .day-column").forEach((el) => {
-            el.classList.toggle("mobile-active", Number(el.dataset.day) === day);
-          });
+          setActiveDay(tabsEl, gridRootEl, Number(button.dataset.day));
         });
       }
 
