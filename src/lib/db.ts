@@ -1,7 +1,7 @@
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import Database from "better-sqlite3";
-import { and, desc, eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/better-sqlite3";
 import { migrate } from "drizzle-orm/better-sqlite3/migrator";
 import { ConflictError, NotFoundError, ValidationError } from "./errors";
@@ -10,13 +10,11 @@ import {
   type CandidateCourse,
   type ConfirmedEnrollment,
   type Course,
-  type Message,
   type PlanPreference,
   type Session,
   candidateCourses,
   confirmedEnrollments,
   courses,
-  messages,
   planPreferences,
   sessions,
 } from "./schema";
@@ -49,16 +47,8 @@ migrate(db, { migrationsFolder: "./drizzle" });
 // redeploy or a restart never clobbers a visitor's saved state.
 seedDemoData(db);
 
-export type { Message, Course, Session, CandidateCourse, PlanPreference, ConfirmedEnrollment };
+export type { Course, Session, CandidateCourse, PlanPreference, ConfirmedEnrollment };
 export { NotFoundError, ValidationError, ConflictError };
-
-export function listMessages(): Message[] {
-  return db.select().from(messages).orderBy(desc(messages.id)).limit(50).all();
-}
-
-export function addMessage(body: string): Message {
-  return db.insert(messages).values({ body }).returning().get();
-}
 
 // --- Courses -----------------------------------------------------------
 

@@ -114,6 +114,54 @@ main.planner input[type="radio"]:focus-visible {
   margin-block-end: 1.5rem;
 }
 
+/* Home page (Phase 6): the two real entry points into the app, styled as
+   equal-weight primary actions rather than plain inline links, since this
+   page's whole job is to get a first-time visitor to one of them. */
+main.home {
+  max-width: 44rem;
+}
+
+.home-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  margin-block: 1.5rem;
+}
+
+.primary-action {
+  flex: 1 1 16rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  padding: 1rem 1.25rem;
+  border: 1px solid #0b5fff;
+  border-radius: 0.5rem;
+  background: #0b5fff;
+  color: #fff;
+  text-decoration: none;
+}
+
+.primary-action:hover,
+.primary-action:focus-visible {
+  background: #0947cc;
+  border-color: #0947cc;
+}
+
+.primary-action:focus-visible {
+  outline: 2px solid #1a1a1a;
+  outline-offset: 2px;
+}
+
+.primary-action-title {
+  font-size: 1.1rem;
+  font-weight: 600;
+}
+
+.primary-action-detail {
+  font-size: 0.9rem;
+  color: #e6edff;
+}
+
 .course-card {
   border: 1px solid #ddd;
   border-radius: 0.5rem;
