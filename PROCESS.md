@@ -1007,4 +1007,153 @@ Deliberately out of scope this round, per my instruction: no visual/layout
 changes; the dev server started above is for me to use, not for the agent to
 click through on its own, since there is still no browser-automation tool in
 this environment.
-draft until I say otherwise.
+
+### Phase 7 — closing the browser-verification gap: a real Playwright suite, and the visual bugs it still couldn't catch
+
+Every phase above ends the same way: "there is still no browser-automation
+tool available in this environment," so every UI round was verified by
+structural markup checks and passing unit/API tests, never by anything that
+actually renders pixels. Before the crit, I authorised the agent to close
+that specific, repeatedly-named gap — install a real browser automation tool,
+write and run a genuine end-to-end acceptance pass against the full planner
+flow at both viewports this repo's `CLAUDE.md` requires, fix any real
+occlusion/overflow/dead-button/dialog problems it actually finds, do a final
+visual-consistency pass on buttons/spacing/status colour, and then move
+straight through documentation, the pre-deploy checks, and a deploy — working
+independently through that list rather than stopping to report after each
+item, since I'd already set the scope and only wanted to be stopped for a
+genuine blocker.
+
+**Playwright suite.** The agent added `@playwright/test` and `playwright`
+(`^1.63.0`) and wrote `e2e/planner-flow.spec.ts`: one spec exercising the
+entire flow this app supports — search for a course, add it as a candidate,
+schedule it manually, pick a section for a same-timeslot multi-section
+tutorial, review the confirm diff, confirm, reload the page, edit the
+confirmed plan back into preview, and withdraw a course — run twice, once
+per viewport project (1920×1080 and 390×844), each against Chromium. Each
+viewport project gets its own dedicated `webServer` and its own temp-file
+`DATABASE_PATH`; the agent found and fixed a real test-isolation bug here
+before trusting the results — the two viewport projects had briefly shared
+one server and one SQLite file, so one project's leftover candidates and
+confirmed enrolment leaked into the other project's run and made its
+assertions unreliable. Giving each project its own server and its own
+throwaway database file removed that leakage entirely; this never touches a
+real dev database (`.data/app.db`). `pnpm test:e2e` (`astro build && playwright
+test`) is the new script; `test-results/` and `playwright-report/`, both
+Playwright's own regenerated run artifacts, were added to `.gitignore` rather
+than committed.
+
+**What passed on the first genuinely green run:** 2/2, both viewport projects,
+covering every step of the flow named above — confirmed by re-running the
+full suite after every fix below, not just once at the end.
+
+**The visual screenshot pass, and what it actually found.** Passing DOM
+assertions is not the same as looking at a rendered page, so the agent also
+drove a full, disposable Playwright script (never committed — it lived only
+as `.tmp-visual-pass.mjs` in the repo root and was deleted once each round of
+screenshots was reviewed) that built the app, started it against its own
+temp database, and captured full-page screenshots of the home, courses, and
+planner pages — including the confirm dialog, the withdraw dialog, a
+scheduled preview, and an empty preview — at both 1920×1080 and 390×844. I
+reviewed every one of these images directly. This is the first round in the
+whole build where the "look at both viewports before calling a page done"
+rule was actually satisfied by looking at pixels, not inferred from compiled
+CSS or served HTML, and it found three real bugs that every previous
+structural/unit-test pass had missed:
+
+1. **Nav links ran together.** `<nav aria-label="site">`'s four links
+   (Home/Courses/Planner/About), identical markup on all four pages, had no
+   CSS rule at all, so the browser's own default rendering strung them into
+   one unbroken line — "HomeCoursesPlannerAbout" — on every page, at every
+   size. Fixed with one shared `nav[aria-label="site"] { display: flex; gap:
+   1.25rem; ... }` rule.
+2. **The mobile day-tab default was tied to the real calendar, not the demo
+   data.** `WeeklyGridSkeleton.astro` picks the day-tab row's initial active
+   day from `new Date().getDay()` — the actual day this machine thinks it is
+   — which has no relationship to which days this prototype's fixed demo
+   courses actually run on. A preview scheduled only on Monday and Wednesday
+   looked completely empty on a phone-width screenshot, because the tab
+   defaulted to whatever today happens to be. Fixed by adding a check after
+   rendering: if the currently-active day has no session on it but some other
+   day does, jump to the first (Monday-first) day that actually has one, so
+   the grid can never appear empty when it genuinely isn't.
+3. **The courses page's "required for this plan" checkbox was stretched into
+   a large empty box.** A prior phase (the "layout fixes after actually
+   looking at the grid" round above) had already hit this exact class of bug
+   once — the site's original, unscoped `input { flex: 1; min-width: 12rem;
+   padding: 0.4rem 0.6rem; }` rule stretches every checkbox and radio button
+   it touches — and fixed it, but scoped the fix to `main.planner` only,
+   reasoning that nothing on `main.courses` needed it at the time. That
+   reasoning stopped being true once the courses page grew its own
+   "required" checkbox, and nobody had re-checked the scope since. Fixed by
+   extending the existing size-reset selector (and its `:focus-visible`
+   companion) to also cover `main.courses`.
+
+All three were confirmed fixed by a second screenshot at the same viewport
+and by re-running the full Playwright suite (2/2 passing) after each change,
+not assumed fixed from the diff alone.
+
+**Final visual-consistency pass.** With the three bugs above fixed, the
+agent did the polish pass I'd scoped in advance: no further layout changes,
+same two-page structure and 08:00–22:00 grid, but a real look at whether
+buttons, borders, spacing, and status colour actually read as *one* design
+rather than an accumulation of per-phase patches. Buttons were the one
+genuine gap: every button on the page — "Review and confirm enrolment,"
+"Cancel," "Withdraw," "Yes, confirm enrolment," "Add to candidates" — used
+the browser's bare unstyled default, so the one action that actually writes a
+change (confirming or withdrawing) carried no more visual weight than routine
+navigation. The agent added a shared bordered/hoverable/disabled baseline for
+every button, plus two modifier classes: `.btn-primary` (the same `#0b5fff`
+blue the home page's own primary action already used, applied to "Review and
+confirm enrolment" and the confirm dialog's "Yes, confirm enrolment") and
+`.btn-danger` (a new red, applied to "Withdraw" and "Yes, withdraw," since
+that's the one destructive action in the app). Status colours for
+conflict/ok/pending/lecture-hint notes were already consistent from earlier
+phases (`#a30000` red / `#0a7a2f` green / `#8a6100` amber / `#0b5fff` blue,
+each used exactly once in `styles.css` and referenced everywhere via
+`classifyOverlap`'s output rather than re-picked per call site) and needed no
+change. The candidate/preview/confirmed states already read as three visibly
+separate things — a plain list with add/remove buttons; checked-into-preview
+rows with a "Scheduled"/"Room pending" status word; a separate, clearly
+labelled "Your confirmed enrolment" section with its own withdraw controls —
+and the button-colour change didn't blur that distinction, confirmed by a
+second full screenshot pass covering the confirm dialog, the withdraw
+dialog, and the confirmed list at both viewports, plus a final Playwright
+re-run (2/2 passing).
+
+**What this closes, and what it still doesn't.** This round is the first one
+in the whole build where a UI change was checked by an agent actually looking
+at rendered screenshots rather than only compiled CSS, served HTML, and
+passing tests — the standing gap named in every phase above from phase 3
+onward. It does not replace me looking at the running app myself: the
+screenshots were reviewed by the agent, working from the standing
+authorisation I'd given it to find and fix real visual problems on its own
+rather than stopping to ask after each one, and I have not yet sat down and
+clicked through the deployed app myself. That's still mine to do before I'd
+call this fully checked, the same as every prior phase's closing note — the
+difference this round is that the gap being named is "I haven't looked yet,"
+not "nothing has looked yet."
+
+Verification before each commit this round: `pnpm build` and the full
+Playwright suite (`npx playwright test`, both viewport projects) — this
+round's changes are UI/CSS/E2E-infrastructure only, so `pnpm test` (the
+vitest suite) was not expected to be affected and was not the primary check
+here; nothing in `src/lib/`, `src/pages/api/`, or the schema changed this
+round.
+
+Commits for this round:
+- [`8267893`](https://github.com/comp4020-agentic-coding-studio/comp4020-crit7-shuyangyuzu-cmd/commit/8267893) — the Playwright acceptance suite (both viewport projects, isolated per-project database)
+- [`2613a76`](https://github.com/comp4020-agentic-coding-studio/comp4020-crit7-shuyangyuzu-cmd/commit/2613a76) — the three real visual bugs the screenshot pass found (nav spacing, mobile day-tab default, courses-page checkbox sizing)
+- [`2fe8ba9`](https://github.com/comp4020-agentic-coding-studio/comp4020-crit7-shuyangyuzu-cmd/commit/2fe8ba9) — unified button styling (`.btn-primary`/`.btn-danger`, shared baseline), screenshot-verified before committing
+
+Deliberately out of scope this round, per my instruction: no further layout
+changes beyond what the three bug fixes and the button pass required; no
+change to the data model, the generator, or any API route; nothing pushed to
+`origin` yet at the point this section was written — that, the remaining
+pre-deploy checks, and the deploy itself are recorded as their own step below
+once done.
+
+---
+
+*Still pending my own review and adoption, as noted at the top of this file:
+draft until I say otherwise.*
