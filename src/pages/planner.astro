@@ -274,7 +274,7 @@ const plannerDataJson = JSON.stringify({
           nothing here is a real enrolment action.
         </p>
         <p id="confirm-blocked-note" class="conflict-note" role="status" aria-live="polite" hidden></p>
-        <button type="button" id="confirm-enrolment-btn">Review and confirm enrolment</button>
+        <button type="button" id="confirm-enrolment-btn" class="btn-primary">Review and confirm enrolment</button>
         <p id="confirm-status" role="status" aria-live="polite"></p>
 
         <div id="confirm-dialog" class="confirm-dialog" role="dialog" aria-label="Confirm enrolment" hidden>
@@ -287,7 +287,7 @@ const plannerDataJson = JSON.stringify({
           <div id="confirm-dialog-diff"></div>
           <p id="confirm-dialog-error" class="conflict-note" role="alert" hidden></p>
           <div class="confirm-dialog-actions">
-            <button type="button" id="confirm-dialog-confirm">Yes, confirm enrolment</button>
+            <button type="button" id="confirm-dialog-confirm" class="btn-primary">Yes, confirm enrolment</button>
             <button type="button" id="confirm-dialog-cancel">Cancel</button>
           </div>
         </div>
@@ -311,7 +311,7 @@ const plannerDataJson = JSON.stringify({
                 {fmtSession(e.tutorialSession)} — {e.tutorialSession.location}
                 <button
                   type="button"
-                  class="withdraw-course-btn"
+                  class="withdraw-course-btn btn-danger"
                   data-course-id={e.courseId}
                   data-course-code={e.course.code}
                 >
@@ -357,7 +357,7 @@ const plannerDataJson = JSON.stringify({
           </p>
           <p id="withdraw-dialog-error" class="conflict-note" role="alert" hidden></p>
           <div class="confirm-dialog-actions">
-            <button type="button" id="withdraw-dialog-confirm">Yes, withdraw</button>
+            <button type="button" id="withdraw-dialog-confirm" class="btn-danger">Yes, withdraw</button>
             <button type="button" id="withdraw-dialog-cancel">Cancel</button>
           </div>
         </div>

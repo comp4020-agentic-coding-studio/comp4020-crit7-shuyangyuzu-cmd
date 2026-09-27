@@ -53,6 +53,49 @@ input {
 button {
   padding: 0.4rem 1rem;
   font: inherit;
+  border: 1px solid #bbb;
+  border-radius: 0.35rem;
+  background: #f4f4f4;
+  cursor: pointer;
+}
+
+button:hover {
+  background: #e9e9e9;
+}
+
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+/* The one clear call-to-action per page (confirming an enrolment change) —
+   same blue as the home page's .primary-action, so "this is the button that
+   actually writes something" reads consistently everywhere. */
+button.btn-primary {
+  border-color: #0b5fff;
+  background: #0b5fff;
+  color: #fff;
+}
+
+button.btn-primary:hover,
+button.btn-primary:focus-visible {
+  background: #0947cc;
+  border-color: #0947cc;
+}
+
+/* Withdrawing removes a real (demo) confirmed enrolment — a destructive
+   action, styled apart from the neutral default and from .btn-primary so it
+   is never mistaken for "just another confirm". */
+button.btn-danger {
+  border-color: #c53030;
+  background: #fff;
+  color: #c53030;
+}
+
+button.btn-danger:hover,
+button.btn-danger:focus-visible {
+  background: #c53030;
+  color: #fff;
 }
 
 #messages {
