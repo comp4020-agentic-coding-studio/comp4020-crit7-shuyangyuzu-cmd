@@ -1008,6 +1008,29 @@ changes; the dev server started above is for me to use, not for the agent to
 click through on its own, since there is still no browser-automation tool in
 this environment.
 
+### Phase 6 — a real home page
+
+The root path (`/`) was still the Astro starter template's own guestbook
+demo — unrelated to this prototype, with no link into `/courses/` or
+`/planner/` at all. I had the agent replace it with an actual landing page
+introducing the prototype and linking straight into both real pages, and
+remove the now-dead guestbook code that came with it: the messages API
+(`src/pages/api/messages.ts`), the SSE event bus (`src/lib/events.ts`,
+`src/pages/api/events.ts`), its own spec file (`spec/guestbook.test.ts`), and
+the CI step that curled the SSE endpoint. The `messages` table itself was
+left alone in `schema.ts` rather than migrated away, since dropping it would
+need a real migration against the production volume for no functional
+benefit — dead code in the schema file costs nothing a live migration
+against deployed data would.
+
+Verification: `pnpm typecheck` and `pnpm test` both passing after the
+removal (no other spec file referenced the guestbook code), and a check that
+nothing on `/courses/`, `/planner/`, or `/readme/` still linked to the
+removed `/api/messages` or `/api/events` routes.
+
+Commit for this round:
+- [`7d12b37`](https://github.com/comp4020-agentic-coding-studio/comp4020-crit7-shuyangyuzu-cmd/commit/7d12b37) — replace the starter guestbook with a real home page
+
 ### Phase 7 — closing the browser-verification gap: a real Playwright suite, and the visual bugs it still couldn't catch
 
 Every phase above ends the same way: "there is still no browser-automation
