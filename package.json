@@ -11,6 +11,7 @@
     "check": "pnpm typecheck && pnpm test",
     "check:evidence": "node scripts/check-evidence.ts",
     "test": "astro build && vitest run",
+    "test:e2e": "astro build && playwright test",
     "db:generate": "drizzle-kit generate"
   },
   "dependencies": {
@@ -22,11 +23,13 @@
   },
   "devDependencies": {
     "@astrojs/check": "^0.9.10",
+    "@playwright/test": "^1.63.0",
     "@types/better-sqlite3": "^7.6.13",
     "@types/jsdom": "^28.0.3",
     "axe-core": "^4.13.0",
     "drizzle-kit": "^0.31.10",
     "jsdom": "^29.1.1",
+    "playwright": "^1.63.0",
     "typescript": "^6.0.3",
     "vitest": "^4.1.10"
   },
